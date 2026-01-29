@@ -1,49 +1,80 @@
 /**
  * modules/csv_parser.js
- * Automatisation : Lance le traitement dès la sélection du fichier.
+ * Version robuste - Automatisation complète sans clic.
  */
 export const CSVParser = {
     originalData: [],
     convertedData: [],
     fileName: '',
 
+    /**
+     * Initialisation du module
+     */
     init() {
+        console.log("[CSVParser] Initialisation du module...");
         const fileInput = document.getElementById('csv-input');
-        // On n'écoute plus le bouton "Lancer", mais directement le changement de l'input file
+        
         if (fileInput) {
+            // Déclenchement dès que le fichier est choisi
             fileInput.addEventListener('change', (e) => this.handleFileSelection(e));
+        } else {
+            console.error("[CSVParser] Élément #csv-input introuvable dans le DOM.");
         }
     },
 
+    /**
+     * Gestion de la lecture du fichier
+     */
     handleFileSelection(event) {
         const file = event.target.files[0];
         if (!file) return;
 
+        console.log(`[CSVParser] Fichier sélectionné : ${file.name}`);
         this.fileName = file.name;
+        this.updateFileUI("Analyse en cours...");
 
         if (typeof Papa !== 'undefined') {
             Papa.parse(file, {
                 header: false,
                 skipEmptyLines: true,
                 complete: (results) => {
+                    console.log("[CSVParser] PapaParse terminé. Lignes trouvées :", results.data.length);
                     this.originalData = results.data;
-                    this.updateFileUI();
-                    // AUTOMATISATION : On lance la conversion immédiatement après la lecture
                     this.processConversion();
+                },
+                error: (err) => {
+                    this.showError(`Erreur PapaParse : ${err.message}`);
                 }
             });
+        } else {
+            console.warn("[CSVParser] PapaParse non détecté, tentative de parsing manuel...");
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                this.originalData = this.simpleCSVParse(e.target.result);
+                this.processConversion();
+            };
+            reader.readAsText(file);
         }
     },
 
+    /**
+     * Transformation des données et passage à l'étape suivante
+     */
     processConversion() {
-        if (this.originalData.length < 2) return;
-        const rows = this.originalData.slice(1);
+        // Vérification du nombre de lignes (En-tête + au moins 1 donnée)
+        if (this.originalData.length < 2) {
+            this.showError("Le fichier est vide ou ne contient que l'en-tête.");
+            return;
+        }
 
-        this.convertedData = rows.map(values => {
-            const rue = (values[0] || '').trim();
-            const ville = (values[1] || '').trim();
-            const cp = (values[2] || '').trim();
-            const rawSite = (values[3] || '').trim();
+        const rows = this.originalData.slice(1); // On ignore la ligne 1 (headers)
+
+        this.convertedData = rows.map((values, index) => {
+            // Nettoyage des index (0: Rue, 1: Commune, 2: CP, 3: Site employeur)
+            const rue = (values[0] || '').toString().trim();
+            const ville = (values[1] || '').toString().trim();
+            const cp = (values[2] || '').toString().trim();
+            const rawSite = (values[3] || '').toString().trim();
 
             const addrE = `${rue} ${ville} ${cp}`.trim();
 
@@ -56,24 +87,50 @@ export const CSVParser = {
             return { 'adresse employé': addrE, 'adresse employeur': addrS };
         }).filter(row => row['adresse employé'] && row['adresse employeur']);
 
-        // AUTOMATISATION : Envoi direct vers le géocodage
+        console.log(`[CSVParser] Conversion finie : ${this.convertedData.length} lignes valides.`);
+        
+        this.updateFileUI(`Analyse terminée : ${this.convertedData.length} lignes prêtes.`);
+
+        // Envoi automatique vers le Geocoder via le routeur (main.js)
         window.dispatchEvent(new CustomEvent('nextStep', {
-            detail: { data: { rawData: this.convertedData }, next: 'step-geo' }
+            detail: { 
+                data: { rawData: this.convertedData }, 
+                next: 'step-geo' 
+            }
         }));
     },
 
-    updateFileUI() {
-        const parseBtn = document.getElementById('btn-parse-csv');
-        let infoBox = document.getElementById('csv-info-display');
-        // On cache le bouton "Lancer" car il n'est plus nécessaire
-        if (parseBtn) parseBtn.style.display = 'none';
+    /**
+     * Mise à jour de l'affichage dans la section #step-csv
+     */
+    updateFileUI(message) {
+        const section = document.getElementById('step-csv');
+        if (!section) return;
 
-        if (!infoBox && parseBtn) {
+        let infoBox = document.getElementById('csv-info-display');
+        if (!infoBox) {
             infoBox = document.createElement('div');
             infoBox.id = 'csv-info-display';
-            infoBox.className = "mt-4 mb-4 p-4 bg-indigo-50 border border-indigo-100 rounded-xl text-sm";
-            parseBtn.parentNode.insertBefore(infoBox, parseBtn);
+            infoBox.className = "mt-6 p-4 bg-indigo-50 border border-indigo-100 rounded-xl text-sm font-medium text-indigo-700";
+            // On l'insère au début de la section
+            section.appendChild(infoBox);
         }
-        if (infoBox) infoBox.innerHTML = `<strong>${this.fileName}</strong> : Chargement et analyse automatique...`;
+        
+        infoBox.innerHTML = `<strong>${this.fileName}</strong> : ${message}`;
+
+        // On masque le bouton s'il existe pour renforcer l'aspect automatique
+        const parseBtn = document.getElementById('btn-parse-csv');
+        if (parseBtn) parseBtn.style.display = 'none';
+    },
+
+    showError(msg) {
+        console.error(`[CSVParser] ${msg}`);
+        this.updateFileUI(`<span class="text-red-600">⚠️ ${msg}</span>`);
+    },
+
+    simpleCSVParse(text) {
+        const lines = text.split('\n').filter(l => l.trim() !== '');
+        const delimiter = lines[0].includes(';') ? ';' : ',';
+        return lines.map(line => line.split(delimiter).map(v => v.trim().replace(/^"|"$/g, '')));
     }
 };
