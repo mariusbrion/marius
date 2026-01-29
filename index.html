@@ -32,6 +32,7 @@
 </head>
 <body class="bg-slate-50 text-slate-900 font-sans min-h-screen flex flex-col">
 
+    <!-- NAVIGATION ET PROGRESSION -->
     <nav class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
         <div class="max-w-6xl mx-auto px-4 py-4">
             <div class="flex items-center justify-between mb-3">
@@ -51,18 +52,17 @@
 
     <main class="flex-grow max-w-6xl mx-auto w-full p-4 md:p-8">
 
-        <!-- STEP 1: CSV PARSER -->
+        <!-- STEP 1: CSV PARSER (Entièrement automatique au chargement) -->
         <section id="step-csv" class="step-view active animate-in fade-in duration-500">
             <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-8 text-center">
                 <h2 class="text-3xl font-bold mb-2">Importation des données</h2>
-                <p class="text-slate-500 mb-8">Sélectionnez votre fichier CSV pour démarrer l'analyse automatique.</p>
+                <p class="text-slate-500 mb-8">Déposez votre fichier CSV pour lancer le traitement automatique.</p>
                 <div class="max-w-md mx-auto">
                     <label class="flex flex-col items-center px-4 py-10 bg-slate-50 text-slate-400 rounded-xl border-2 border-dashed border-slate-300 cursor-pointer hover:bg-slate-100 hover:border-indigo-400 transition-all group">
                         <svg class="w-12 h-12 mb-3 group-hover:text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                         <span class="text-sm font-medium text-slate-600">Sélectionner un fichier CSV</span>
                         <input type="file" id="csv-input" class="hidden" accept=".csv" />
                     </label>
-                    <button id="btn-parse-csv" class="hidden">Lancer</button>
                 </div>
             </div>
         </section>
@@ -75,7 +75,6 @@
                     <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
                     <p class="font-semibold text-indigo-900">Conversion en cours...</p>
                 </div>
-                <button id="btn-go-route" class="hidden"></button>
             </div>
         </section>
 
@@ -83,8 +82,7 @@
         <section id="step-route" class="step-view">
             <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
                 <h2 class="text-2xl font-bold mb-4 text-slate-800">Calcul des itinéraires</h2>
-                <div class="bg-slate-900 text-green-400 p-6 rounded-xl font-mono text-sm h-64 overflow-y-auto mb-6 shadow-inner" id="route-logs">> Initialisation...</div>
-                <button id="btn-go-settings" class="hidden"></button>
+                <div class="bg-slate-900 text-green-400 p-6 rounded-xl font-mono text-sm h-64 overflow-y-auto mb-6 shadow-inner" id="route-logs">> Initialisation du moteur d'itinéraires...</div>
             </div>
         </section>
 
@@ -112,15 +110,16 @@
                 <div class="p-4 bg-white border-t border-slate-100 flex justify-between items-center">
                     <div class="flex items-center space-x-2">
                         <span class="flex h-2 w-2 rounded-full bg-emerald-500"></span>
-                        <span class="text-xs font-bold text-slate-500 uppercase">Carte de chaleur générée</span>
+                        <span class="text-xs font-bold text-slate-500 uppercase">Analyse terminée</span>
                     </div>
-                    <button onclick="location.reload()" class="text-xs font-bold text-indigo-600 hover:text-indigo-800 uppercase tracking-tighter transition-colors">Nouvelle analyse</button>
+                    <button onclick="location.reload()" class="text-xs font-bold text-indigo-600 hover:text-indigo-800 uppercase tracking-tighter transition-colors">Relancer une analyse</button>
                 </div>
             </div>
         </section>
 
     </main>
 
+    <!-- Point d'entrée de l'application -->
     <script type="module" src="main.js"></script>
 </body>
 </html>
