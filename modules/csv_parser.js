@@ -1,8 +1,6 @@
 /**
  * modules/csv_parser.js
  * Gère l'importation, la validation et la transformation des données CSV.
- * Format d'entrée : 4 colonnes (Rue, Commune, CP, Site employeur)
- * Format de sortie : 2 colonnes (adresse employé, adresse employeur)
  */
 
 export const CSVParser = {
@@ -10,12 +8,8 @@ export const CSVParser = {
     convertedData: [],
     fileName: '',
 
-    /**
-     * Initialisation du module
-     */
     init() {
         console.log("[CSVParser] Initialisation...");
-        
         const fileInput = document.getElementById('csv-input');
         const parseBtn = document.getElementById('btn-parse-csv');
 
@@ -28,9 +22,6 @@ export const CSVParser = {
         }
     },
 
-    /**
-     * Gère la sélection du fichier et la lecture initiale
-     */
     handleFileSelection(event) {
         const file = event.target.files[0];
         if (!file) return;
@@ -44,11 +35,7 @@ export const CSVParser = {
         this.readFile(file);
     },
 
-    /**
-     * Lecture du fichier via PapaParse (ou FileReader en fallback)
-     */
     readFile(file) {
-        // On utilise PapaParse s'il est disponible (chargé via CDN dans index.html)
         if (typeof Papa !== 'undefined') {
             Papa.parse(file, {
                 header: true,
@@ -61,7 +48,6 @@ export const CSVParser = {
                 error: (err) => this.showError(`Erreur de lecture : ${err.message}`)
             });
         } else {
-            // Fallback manuel si PapaParse n'est pas chargé
             const reader = new FileReader();
             reader.onload = (e) => {
                 const text = e.target.result;
@@ -72,9 +58,6 @@ export const CSVParser = {
         }
     },
 
-    /**
-     * Transformation des 4 colonnes vers 2 colonnes (Logique métier originale)
-     */
     processConversion() {
         if (this.originalData.length === 0) {
             this.showError('Aucune donnée à traiter.');
@@ -84,14 +67,11 @@ export const CSVParser = {
         try {
             this.convertedData = this.originalData.map(row => {
                 const values = Object.values(row);
-                
-                // Extraction selon votre logique originale
                 let rue = (values[0] || '').toString().trim();
                 let commune = (values[1] || '').toString().trim();
                 let cp = (values[2] || '').toString().trim();
                 let site = (values[3] || '').toString().trim();
 
-                // Construction de l'adresse employé : "Commune;Rue (CP)"
                 let addrE = commune && rue ? `${commune};${rue}` : (commune || rue || '');
                 if (cp && addrE) addrE += ` (${cp})`;
 
@@ -107,35 +87,32 @@ export const CSVParser = {
         }
     },
 
-    /**
-     * Envoie les données vers le main.js (Orchestrateur)
-     */
     emitNextStep() {
         console.log("[CSVParser] Conversion réussie, envoi des données...");
-
         const event = new CustomEvent('nextStep', {
             detail: {
                 data: { rawData: this.convertedData },
                 next: 'step-geo'
             }
         });
-
         window.dispatchEvent(event);
     },
 
     /**
-     * Mise à jour de l'interface utilisateur spécifique à l'étape 1
+     * Correction ici : On utilise le parent du bouton de manière sécurisée
      */
     updateFileUI() {
-        const section = document.getElementById('step-csv');
-        // On cherche ou crée un petit indicateur de succès
+        const parseBtn = document.getElementById('btn-parse-csv');
+        if (!parseBtn) return;
+
         let infoBox = document.getElementById('csv-info-display');
         
         if (!infoBox) {
             infoBox = document.createElement('div');
             infoBox.id = 'csv-info-display';
-            infoBox.className = "mt-4 p-4 bg-indigo-50 border border-indigo-100 rounded-xl text-sm";
-            section.querySelector('.space-y-4').insertBefore(infoBox, document.getElementById('btn-parse-csv'));
+            infoBox.className = "mt-4 mb-4 p-4 bg-indigo-50 border border-indigo-100 rounded-xl text-sm text-left";
+            // On insère AVANT le bouton
+            parseBtn.parentNode.insertBefore(infoBox, parseBtn);
         }
 
         infoBox.innerHTML = `
@@ -149,18 +126,17 @@ export const CSVParser = {
 
     showError(message) {
         console.error(`[CSVParser] ${message}`);
+        this.updateFileUI(); // Pour s'assurer que l'infoBox existe
         const infoBox = document.getElementById('csv-info-display');
         if (infoBox) {
-            infoBox.className = "mt-4 p-4 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 font-medium";
+            infoBox.className = "mt-4 mb-4 p-4 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600 font-medium";
             infoBox.innerText = `⚠️ ${message}`;
         }
     },
 
-    /**
-     * Fallback minimal si PapaParse n'est pas chargé
-     */
     simpleCSVParse(text) {
         const lines = text.split('\n').filter(l => l.trim() !== '');
+        if (lines.length === 0) return [];
         const headers = lines[0].split(',').map(h => h.trim());
         return lines.slice(1).map(line => {
             const data = line.split(',');
