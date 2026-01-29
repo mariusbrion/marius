@@ -1,7 +1,7 @@
 /**
  * modules/map_display.js
  * Gère le rendu Deck.gl et la sauvegarde Cloud vers Google Sheets.
- * Version : CSV en 5ème colonne et GeoJSON séparés.
+ * Correction : Génération du CSV d'analyse complet pour la colonne 5.
  */
 
 export const MapDisplay = {
@@ -95,80 +95,89 @@ export const MapDisplay = {
 
     /**
      * Sauvegarde Cloud vers Google Sheets
-     * Nouvel Ordre : field1:Site, field2:Ville, field3:Points, field4:Lignes, field5:CSV
      */
     async saveToSheets(state) {
         const siteName = document.getElementById('input-site-name')?.value.trim();
         const cityName = document.getElementById('input-city')?.value.trim();
         const btn = document.getElementById('btn-cloud-save');
 
-        this.addCloudLog("Déclenchement de la sauvegarde Cloud...");
+        this.addCloudLog("Préparation de l'envoi cloud...");
 
         if (!siteName || !cityName) {
-            this.addCloudLog("Erreur : Nom du site ou ville manquants.", "error");
-            alert("Veuillez renseigner le nom du site et la ville.");
+            this.addCloudLog("Erreur : Nom ou Ville manquant.", "error");
+            alert("Veuillez remplir les informations du site.");
             return;
         }
 
         btn.disabled = true;
-        btn.innerHTML = `<span class="loader mr-2"></span>Envoi...`;
+        btn.innerHTML = `<span class="loader mr-2"></span>Sauvegarde...`;
 
         try {
-            // 1. GeoJSON Points
+            // 1. GÉNERATION DU CSV D'ANALYSE (Format demandé)
+            // On transforme les objets 'routes' en format plat pour le CSV
+            const analysisData = state.routes.map(r => ({
+                id: r.id,
+                start_lat: r.start_lat,
+                start_lon: r.start_lon,
+                end_lat: r.end_lat,
+                end_lon: r.end_lon,
+                distance_km: r.distance_km || '',
+                duration_minutes: r.duration_min || '',
+                status: r.status,
+                error: r.error || ''
+            }));
+
+            const csvContent = Papa.unparse(analysisData);
+            this.addCloudLog(`CSV d'analyse généré : ${analysisData.length} lignes.`);
+
+            // 2. GeoJSON Points
             const pointsGeoJson = {
                 type: "FeatureCollection",
                 features: state.coordinates.flatMap(c => [
                     {
                         type: "Feature",
-                        properties: { id: c.id, type: "depart", addr: c.employee_address },
+                        properties: { id: c.id, type: "depart" },
                         geometry: { type: "Point", coordinates: [c.start_lon, c.start_lat] }
                     },
                     {
                         type: "Feature",
-                        properties: { id: c.id, type: "arrivee", addr: c.employer_address },
+                        properties: { id: c.id, type: "arrivee" },
                         geometry: { type: "Point", coordinates: [c.end_lon, c.end_lat] }
                     }
                 ])
             };
 
-            // 2. GeoJSON Lignes
+            // 3. GeoJSON Lignes
             const linesGeoJson = {
                 type: "FeatureCollection",
                 features: state.routes.filter(r => r.status === 'success').map(r => ({
                     type: "Feature",
-                    properties: { id: r.id, dist: r.distance_km, dur: r.duration_min },
+                    properties: { id: r.id, dist: r.distance_km },
                     geometry: { type: "LineString", coordinates: this.decodePolyline(r.geometry) }
                 }))
             };
 
-            // 3. Payload avec CSV en field5
+            // 4. Payload final (CSV en field5)
             const payload = {
                 field1: siteName,
                 field2: cityName,
-                field3: JSON.stringify(pointsGeoJson), // Points en Col 3
-                field4: JSON.stringify(linesGeoJson),  // Lignes en Col 4
-                field5: JSON.stringify(state.rawData)  // CSV en Col 5
+                field3: JSON.stringify(pointsGeoJson),
+                field4: JSON.stringify(linesGeoJson),
+                field5: csvContent // C'est ici que le CSV d'analyse est envoyé
             };
-
-            const csvSize = (payload.field5.length / 1024).toFixed(1);
-            const ptsSize = (payload.field3.length / 1024).toFixed(1);
-            const lnsSize = (payload.field4.length / 1024).toFixed(1);
-
-            this.addCloudLog(`Préparation finie. Points: ${ptsSize}KB, Lignes: ${lnsSize}KB, CSV: ${csvSize}KB.`);
 
             const url = "https://script.google.com/macros/s/AKfycbxgTYcx-62MBamAawDtt3IMgMAFCkudO49be8amsULPoeNkXiYLuh3dXK8zLd9u-hoyAA/exec";
 
-            this.addCloudLog("Envoi vers Google Sheets...");
+            this.addCloudLog("Envoi en cours (Mode no-cors)...");
 
             await fetch(url, {
                 method: 'POST',
                 mode: 'no-cors',
-                cache: 'no-cache',
                 headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify(payload)
             });
 
-            this.addCloudLog("Transmission réussie ! Vérifiez la 5ème colonne de votre Sheet.", "success");
+            this.addCloudLog("Succès ! CSV d'analyse transmis en 5ème colonne.", "success");
             alert("Données sauvegardées !");
 
         } catch (error) {
