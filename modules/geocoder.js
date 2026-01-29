@@ -1,6 +1,7 @@
 /**
  * modules/geocoder.js
  * Géocodage avec priorité BAN, gestion des délais et groupement par employeur.
+ * Mise à jour : Suivi précis des deux étapes de géocodage par ligne.
  */
 export const Geocoder = {
     processedData: [],
@@ -8,7 +9,10 @@ export const Geocoder = {
 
     init() {
         const btnNext = document.getElementById('btn-go-route');
-        if (btnNext) btnNext.addEventListener('click', () => this.emitNextStep());
+        if (btnNext) {
+            btnNext.style.display = 'none';
+            btnNext.addEventListener('click', () => this.emitNextStep());
+        }
     },
 
     async startGeocoding(data) {
@@ -19,29 +23,46 @@ export const Geocoder = {
 
         const employerGroups = {};
         let currentLetter = 'a';
-        const total = data.length;
+        const totalRows = data.length;
+        const totalSteps = totalRows * 2; // 2 géocodages par ligne
 
         for (let i = 0; i < data.length; i++) {
             const pair = data[i];
-            this.updateUI(i, total, `Traitement : ${pair['adresse employé']}`);
+            const currentStepBase = i * 2;
 
-            // 1. Géocodage Employé
+            // --- ÉTAPE 1 : Géocodage Employé ---
+            const addrEmployee = pair['adresse employé'];
+            this.updateUI(currentStepBase, totalSteps, `Employé ${i + 1}/${totalRows} : ${addrEmployee}`);
+            
             await this.delay(1200);
-            const employeeCoords = await this.fetchWithFallback(pair['adresse employé']);
-            if (!employeeCoords) continue;
+            const employeeCoords = await this.fetchWithFallback(addrEmployee);
+            
+            if (!employeeCoords) {
+                console.warn(`[Geocoder] Échec employé : ${addrEmployee}`);
+                continue; 
+            }
 
-            // 2. Géocodage Employeur (avec cache/groupes)
+            // --- ÉTAPE 2 : Géocodage Employeur (avec cache/groupes) ---
             let employerCoords;
             let groupId;
             const site = pair['adresse employeur'];
 
+            this.updateUI(currentStepBase + 1, totalSteps, `Employeur ${i + 1}/${totalRows} : ${site}`);
+
             if (employerGroups[site]) {
+                // Utilisation du cache pour optimiser les appels API
                 employerCoords = employerGroups[site].coords;
                 groupId = employerGroups[site].groupId;
+                // Petit délai visuel pour que l'utilisateur voit l'étape passer
+                await this.delay(300);
             } else {
                 await this.delay(1200);
                 employerCoords = await this.fetchWithFallback(site);
-                if (!employerCoords) continue;
+                
+                if (!employerCoords) {
+                    console.warn(`[Geocoder] Échec employeur : ${site}`);
+                    continue;
+                }
 
                 groupId = currentLetter;
                 employerGroups[site] = { coords: employerCoords, groupId: currentLetter, count: 0 };
@@ -57,13 +78,15 @@ export const Geocoder = {
                 start_lon: employeeCoords.lon,
                 end_lat: employerCoords.lat,
                 end_lon: employerCoords.lon,
-                employee_address: pair['adresse employé'],
+                employee_address: addrEmployee,
                 employer_address: site
             });
         }
 
-        this.updateUI(total, total, "Géocodage terminé !");
-        document.getElementById('btn-go-route').style.display = 'block';
+        this.updateUI(totalSteps, totalSteps, `Géocodage terminé ! ${this.processedData.length} trajets prêts.`);
+        
+        const btnNext = document.getElementById('btn-go-route');
+        if (btnNext) btnNext.style.display = 'block';
     },
 
     async fetchWithFallback(address) {
@@ -109,10 +132,14 @@ export const Geocoder = {
     ensureProgressUI(container) {
         if (!document.getElementById('geo-progress-bar')) {
             const html = `
-                <div class="mb-6"><div class="bg-slate-100 rounded-full h-2 overflow-hidden">
-                <div id="geo-progress-bar" class="bg-indigo-500 h-full w-0 transition-all"></div>
-                </div><p id="geo-progress-text" class="text-xs text-center mt-2"></p></div>`;
-            container.querySelector('div').insertAdjacentHTML('afterbegin', html);
+                <div class="mb-6">
+                    <div class="bg-slate-100 rounded-full h-2 overflow-hidden">
+                        <div id="geo-progress-bar" class="bg-indigo-500 h-full w-0 transition-all duration-300"></div>
+                    </div>
+                    <p id="geo-progress-text" class="text-[11px] font-medium text-slate-500 text-center mt-2 italic tracking-tight"></p>
+                </div>`;
+            const target = container.querySelector('div');
+            if (target) target.insertAdjacentHTML('afterbegin', html);
         }
     },
 
