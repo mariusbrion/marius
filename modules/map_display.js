@@ -1,7 +1,7 @@
 /**
  * modules/map_display.js
  * Gère le rendu Deck.gl et la sauvegarde Cloud vers Google Sheets.
- * Inclut un système de logging pour débugger l'envoi.
+ * Correction : Alignement sur le format JSON brut pour Apps Script.
  */
 
 export const MapDisplay = {
@@ -83,7 +83,7 @@ export const MapDisplay = {
     },
 
     /**
-     * Système de Logs Visuel
+     * Système de Logs Visuel amélioré
      */
     addCloudLog(msg, type = 'info') {
         const terminal = document.getElementById('cloud-logs');
@@ -95,6 +95,7 @@ export const MapDisplay = {
 
     /**
      * Sauvegarde Cloud vers Google Sheets
+     * Correction : Utilisation du format JSON brut (JSON.stringify)
      */
     async saveToSheets(state) {
         const siteName = document.getElementById('input-site-name')?.value.trim();
@@ -104,18 +105,20 @@ export const MapDisplay = {
         this.addCloudLog("Démarrage de la procédure de sauvegarde...");
 
         if (!siteName || !cityName) {
-            this.addCloudLog("Erreur : Nom du site ou Ville manquant.", "error");
-            alert("Veuillez remplir les champs Nom du site et Ville.");
+            this.addCloudLog("Erreur : Champs obligatoires vides.", "error");
+            alert("Veuillez remplir Nom du site et Ville.");
             return;
         }
 
         btn.disabled = true;
-        btn.innerText = "Envoi...";
+        const oldText = btn.innerHTML;
+        btn.innerText = "Traitement...";
 
         try {
             // file1 : RawData
             const file1 = state.rawData;
-            this.addCloudLog(`File 1 (Raw) prêt : ${file1.length} lignes.`);
+            const file1Str = JSON.stringify(file1);
+            this.addCloudLog(`CSV : ${file1.length} lignes (${(file1Str.length / 1024).toFixed(1)} KB)`);
 
             // file2 : Points (GeoJSON)
             const file2 = {
@@ -123,59 +126,63 @@ export const MapDisplay = {
                 features: state.coordinates.flatMap(c => [
                     {
                         type: "Feature",
-                        properties: { id: c.id, type: "depart" },
+                        properties: { id: c.id, type: "depart", addr: c.employee_address },
                         geometry: { type: "Point", coordinates: [c.start_lon, c.start_lat] }
                     },
                     {
                         type: "Feature",
-                        properties: { id: c.id, type: "arrivee" },
+                        properties: { id: c.id, type: "arrivee", addr: c.employer_address },
                         geometry: { type: "Point", coordinates: [c.end_lon, c.end_lat] }
                     }
                 ])
             };
-            this.addCloudLog(`File 2 (Points) prêt : ${file2.features.length} points.`);
+            const file2Str = JSON.stringify(file2);
+            this.addCloudLog(`Points : ${file2.features.length} features (${(file2Str.length / 1024).toFixed(1)} KB)`);
 
-            // file3 : Lignes (GeoJSON)
+            // file3 : Lignes (GeoJSON décodé)
             const file3 = {
                 type: "FeatureCollection",
                 features: state.routes.filter(r => r.status === 'success').map(r => ({
                     type: "Feature",
-                    properties: { id: r.id, dist: r.distance_km },
+                    properties: { id: r.id, dist: r.distance_km, dur: r.duration_min },
                     geometry: { type: "LineString", coordinates: this.decodePolyline(r.geometry) }
                 }))
             };
-            this.addCloudLog(`File 3 (Lines) prêt : ${file3.features.length} tracés.`);
+            const file3Str = JSON.stringify(file3);
+            this.addCloudLog(`Lignes : ${file3.features.length} tracés (${(file3Str.length / 1024).toFixed(1)} KB)`);
 
-            // Payload
-            const payload = new URLSearchParams();
-            payload.append('field1', siteName);
-            payload.append('field2', cityName);
-            payload.append('field3', JSON.stringify(file1));
-            payload.append('field4', JSON.stringify(file2));
-            payload.append('field5', JSON.stringify(file3));
+            // Payload - Construction d'un objet JSON plat comme dans ton exemple réussi
+            const payload = {
+                field1: siteName,
+                field2: cityName,
+                field3: file1Str,
+                field4: file2Str,
+                field5: file3Str
+            };
 
-            this.addCloudLog("Payload généré. Envoi vers le script Google...");
+            this.addCloudLog("Envoi en cours vers Google Script...");
 
             const url = "https://script.google.com/macros/s/AKfycbwTDUwHS5Z27PgGr3Vu73kwgUXQ4iJyXjwlB8faTVydZ4RyA8nQ_GWYzFdmify4EYLxYA/exec";
 
-            // Envoi POST no-cors
+            // Utilisation du format fetch exact de ton exemple qui marche
             await fetch(url, {
                 method: 'POST',
                 mode: 'no-cors',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: payload
+                cache: 'no-cache',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
             });
 
-            this.addCloudLog("Requête envoyée avec succès (statut opaque via no-cors).", "success");
-            this.addCloudLog("Vérifiez votre Google Sheet dans quelques secondes.", "success");
+            this.addCloudLog("Transmission terminée (Statut opaque).", "success");
+            this.addCloudLog("Vérifiez votre Google Sheet.", "success");
             alert("Données sauvegardées !");
 
         } catch (error) {
-            this.addCloudLog(`Erreur réseau : ${error.message}`, "error");
-            alert("Échec de la connexion au serveur.");
+            this.addCloudLog(`Erreur critique : ${error.message}`, "error");
+            console.error(error);
         } finally {
             btn.disabled = false;
-            btn.innerHTML = `<span>Sauvegarder les données</span>`;
+            btn.innerHTML = oldText;
         }
     },
 
