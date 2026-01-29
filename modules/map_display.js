@@ -1,7 +1,6 @@
 /**
  * modules/map_display.js
- * Gère le rendu Deck.gl et la sauvegarde Cloud vers Google Sheets.
- * Ajout : Affichage des couches Isochrones (GeoJsonLayer).
+ * Ordre : 2km au-dessus. Opacité : 15%. Sauvegarde : 8 colonnes.
  */
 
 export const MapDisplay = {
@@ -9,9 +8,7 @@ export const MapDisplay = {
     lastState: null,
 
     render(state) {
-        console.log("[MapDisplay] Préparation du rendu...");
         this.lastState = state;
-
         if (!state.routes || state.routes.length === 0) return;
 
         const saveBtn = document.getElementById('btn-cloud-save');
@@ -23,75 +20,50 @@ export const MapDisplay = {
         const allTrajectoires = [];
         const allHeatmapPoints = [];
 
-        // 1. Traitement des routes
         state.routes.forEach(route => {
             if (route.status === 'success' && route.geometry) {
                 const coords = this.decodePolyline(route.geometry);
-                allTrajectoires.push({
-                    type: "Feature",
-                    properties: { id: route.id, dist: route.distance_km },
-                    geometry: { type: "LineString", coordinates: coords }
-                });
+                allTrajectoires.push({ type: "Feature", geometry: { type: "LineString", coordinates: coords } });
                 coords.forEach(p => allHeatmapPoints.push({ coords: p }));
             }
         });
 
-        // 2. Définition des couleurs pour les isochrones (Vert -> Rouge)
-        const isochroneColors = {
-            2: [39, 174, 96, 100],   // 2km - Vert
-            5: [241, 196, 15, 100],  // 5km - Jaune
-            10: [230, 126, 34, 100], // 10km - Orange
-            13: [231, 76, 60, 100]   // 13km - Rouge
-        };
+        // TRI POUR EMPILEMENT : On trie pour avoir le 10km en premier dans le tableau (fond) et 2km en dernier (top)
+        const isochroneFeatures = state.isochrones 
+            ? [...state.isochrones].sort((a, b) => b.properties.range_km - a.properties.range_km) 
+            : [];
 
         const layers = [
             new deck.TileLayer({
                 id: 'base-map-tiles',
                 data: 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-                minZoom: 0,
-                maxZoom: 19,
                 renderSubLayers: props => {
                     const { bbox: { west, south, east, north } } = props.tile;
-                    return new deck.BitmapLayer(props, {
-                        data: null,
-                        image: props.data,
-                        bounds: [west, south, east, north]
-                    });
+                    return new deck.BitmapLayer(props, { data: null, image: props.data, bounds: [west, south, east, north] });
                 }
             }),
-            
-            // --- NOUVELLE COUCHE : ISOCHRONES ---
+
             new deck.GeoJsonLayer({
-                id: 'isochrone-layer',
-                data: { type: "FeatureCollection", features: state.isochrones || [] },
-                pickable: true,
-                stroked: true,
-                filled: true,
-                lineWidthMinPixels: 2,
-                getFillColor: d => {
-                    // OpenRouteService renvoie la distance en mètres (ex: 2000)
-                    const distKm = d.properties.value / 1000;
-                    return isochroneColors[distKm] || [100, 100, 100, 80];
-                },
-                getLineColor: [255, 255, 255, 150],
-                getLineWidth: 1,
-                opacity: 0.4
+                id: 'isochrones-layer',
+                data: { type: "FeatureCollection", features: isochroneFeatures },
+                pickable: true, stroked: true, filled: true,
+                opacity: 0.15, // Consigne : 15% opacité
+                getFillColor: d => this.getIsochroneColor(d.properties.range_km),
+                getLineColor: [255, 255, 255, 100],
+                getLineWidth: 1
             }),
 
             new deck.HeatmapLayer({
                 id: 'heatmap-layer',
                 data: allHeatmapPoints,
                 getPosition: d => d.coords,
-                radiusPixels: 35,
-                intensity: 1,
-                threshold: 0.05
+                radiusPixels: 35, intensity: 1, threshold: 0.05
             }),
 
             new deck.GeoJsonLayer({
                 id: 'routes-layer-internal',
                 data: { type: "FeatureCollection", features: allTrajectoires },
-                visible: false,
-                pickable: true
+                visible: false, pickable: true
             })
         ];
 
@@ -100,102 +72,66 @@ export const MapDisplay = {
                 container: 'map-container',
                 initialViewState: this.calculateInitialView(allHeatmapPoints),
                 controller: true,
-                layers: layers
+                layers: layers,
+                getTooltip: ({object}) => object && object.properties.range_km && `Isochrone: ${object.properties.range_km} km`
             });
         } else {
-            this.deckgl.setProps({ layers: layers, initialViewState: this.calculateInitialView(allHeatmapPoints) });
+            this.deckgl.setProps({ layers, initialViewState: this.calculateInitialView(allHeatmapPoints) });
         }
     },
 
-    addCloudLog(msg, type = 'info') {
-        const terminal = document.getElementById('cloud-logs');
-        if (!terminal) return;
-        const color = type === 'error' ? '#f87171' : (type === 'success' ? '#4ad395' : '#38bdf8');
-        terminal.innerHTML += `<br><span style="color: ${color}">> ${msg}</span>`;
-        terminal.scrollTop = terminal.scrollHeight;
+    getIsochroneColor(km) {
+        if (km <= 2) return [46, 204, 113];   // Vert
+        if (km <= 5) return [241, 196, 15];  // Jaune
+        return [230, 126, 34];               // Orange (10km)
     },
 
     async saveToSheets(state) {
         const siteName = document.getElementById('input-site-name')?.value.trim();
         const cityName = document.getElementById('input-city')?.value.trim();
         const btn = document.getElementById('btn-cloud-save');
-
-        this.addCloudLog("Préparation de l'envoi cloud...");
-
-        if (!siteName || !cityName) {
-            this.addCloudLog("Erreur : Nom ou Ville manquant.", "error");
-            alert("Veuillez remplir les informations du site.");
-            return;
-        }
+        if (!siteName || !cityName) { alert("Remplissez les champs Site et Ville."); return; }
 
         btn.disabled = true;
-        btn.innerHTML = `<span class="loader mr-2"></span>Sauvegarde...`;
+        btn.innerHTML = `<span class="loader mr-2"></span>Export...`;
 
         try {
             const analysisData = state.routes.map(r => ({
-                id: r.id,
-                start_lat: r.start_lat,
-                start_lon: r.start_lon,
-                end_lat: r.end_lat,
-                end_lon: r.end_lon,
-                distance_km: r.distance_km || '',
-                duration_minutes: r.duration_min || '',
-                status: r.status,
-                error: r.error || ''
+                id: r.id, start_lat: r.start_lat, start_lon: r.start_lon, end_lat: r.end_lat, end_lon: r.end_lon,
+                distance_km: r.distance_km || '', duration_minutes: r.duration_min || '', status: r.status, error: r.error || ''
             }));
 
-            const csvContent = Papa.unparse(analysisData);
-            this.addCloudLog(`CSV d'analyse généré : ${analysisData.length} lignes.`);
+            const ptsGeo = { type: "FeatureCollection", features: state.coordinates.flatMap(c => [
+                { type: "Feature", properties: { id: c.id, type: "dep" }, geometry: { type: "Point", coordinates: [c.start_lon, c.start_lat] } },
+                { type: "Feature", properties: { id: c.id, type: "arr" }, geometry: { type: "Point", coordinates: [c.end_lon, c.end_lat] } }
+            ])};
 
-            const pointsGeoJson = {
-                type: "FeatureCollection",
-                features: state.coordinates.flatMap(c => [
-                    {
-                        type: "Feature",
-                        properties: { id: c.id, type: "depart", addr: c.employee_address },
-                        geometry: { type: "Point", coordinates: [c.start_lon, c.start_lat] }
-                    },
-                    {
-                        type: "Feature",
-                        properties: { id: c.id, type: "arrivee", addr: c.employer_address },
-                        geometry: { type: "Point", coordinates: [c.end_lon, c.end_lat] }
-                    }
-                ])
-            };
+            const lnsGeo = { type: "FeatureCollection", features: state.routes.filter(r => r.status === 'success').map(r => ({
+                type: "Feature", properties: { id: r.id }, geometry: { type: "LineString", coordinates: this.decodePolyline(r.geometry) }
+            }))};
 
-            const linesGeoJson = {
+            // FILTRAGE DES ISOCHRONES PAR DISTANCE POUR LES COLONNES 6, 7, 8
+            const getIsoByKm = (km) => ({
                 type: "FeatureCollection",
-                features: state.routes.filter(r => r.status === 'success').map(r => ({
-                    type: "Feature",
-                    properties: { id: r.id, dist: r.distance_km },
-                    geometry: { type: "LineString", coordinates: this.decodePolyline(r.geometry) }
-                }))
-            };
+                features: (state.isochrones || []).filter(f => f.properties.range_km === km)
+            });
 
             const payload = {
                 field1: siteName,
                 field2: cityName,
-                field3: JSON.stringify(pointsGeoJson),
-                field4: JSON.stringify(linesGeoJson),
-                field5: csvContent
+                field3: JSON.stringify(ptsGeo),
+                field4: JSON.stringify(lnsGeo),
+                field5: Papa.unparse(analysisData),
+                field6: JSON.stringify(getIsoByKm(2)),  // Isochrone 2km
+                field7: JSON.stringify(getIsoByKm(5)),  // Isochrone 5km
+                field8: JSON.stringify(getIsoByKm(10))  // Isochrone 10km
             };
 
             const url = "https://script.google.com/macros/s/AKfycbxgTYcx-62MBamAawDtt3IMgMAFCkudO49be8amsULPoeNkXiYLuh3dXK8zLd9u-hoyAA/exec";
+            await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
 
-            this.addCloudLog("Envoi en cours (Mode no-cors)...");
-
-            await fetch(url, {
-                method: 'POST',
-                mode: 'no-cors',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify(payload)
-            });
-
-            this.addCloudLog("Succès ! CSV d'analyse transmis en 5ème colonne.", "success");
-            alert("Données sauvegardées !");
-
+            alert("Données sauvegardées (8 colonnes) !");
         } catch (error) {
-            this.addCloudLog(`Erreur : ${error.message}`, "error");
             console.error(error);
         } finally {
             btn.disabled = false;
@@ -204,16 +140,15 @@ export const MapDisplay = {
     },
 
     decodePolyline(str, precision = 5) {
-        let index = 0, lat = 0, lng = 0, coordinates = [], shift = 0, result = 0, byte = null,
-            lat_change, lng_change, factor = Math.pow(10, precision);
+        let index = 0, lat = 0, lng = 0, coordinates = [], shift = 0, result = 0, byte = null, lat_c, lng_c, factor = Math.pow(10, precision);
         while (index < str.length) {
             byte = null; shift = 0; result = 0;
             do { byte = str.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
-            lat_change = ((result & 1) ? ~(result >> 1) : (result >> 1));
+            lat_c = ((result & 1) ? ~(result >> 1) : (result >> 1));
             shift = result = 0;
             do { byte = str.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
-            lng_change = ((result & 1) ? ~(result >> 1) : (result >> 1));
-            lat += lat_change; lng += lng_change;
+            lng_c = ((result & 1) ? ~(result >> 1) : (result >> 1));
+            lat += lat_c; lng += lng_c;
             coordinates.push([lng / factor, lat / factor]);
         }
         return coordinates;
@@ -226,5 +161,3 @@ export const MapDisplay = {
         return { longitude: avgLon, latitude: avgLat, zoom: 11, pitch: 0, bearing: 0 };
     }
 };
-
-
