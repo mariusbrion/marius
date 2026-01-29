@@ -24,9 +24,19 @@
         .progress-bar { transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
         #map-container {
             width: 100%;
-            height: calc(100vh - 240px);
+            height: 500px; /* Hauteur fixe pour laisser de la place aux logs */
             position: relative;
             background: #e2e8f0;
+        }
+        .log-terminal {
+            background: #1e293b;
+            color: #38bdf8;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 11px;
+            height: 120px;
+            overflow-y: auto;
+            padding: 10px;
+            border-top: 2px solid #0f172a;
         }
     </style>
 </head>
@@ -52,7 +62,7 @@
 
     <main class="flex-grow max-w-6xl mx-auto w-full p-4 md:p-8">
 
-        <!-- STEP 1: CSV PARSER (Entièrement automatique au chargement) -->
+        <!-- STEP 1: CSV PARSER -->
         <section id="step-csv" class="step-view active animate-in fade-in duration-500">
             <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-8 text-center">
                 <h2 class="text-3xl font-bold mb-2">Importation des données</h2>
@@ -63,6 +73,7 @@
                         <span class="text-sm font-medium text-slate-600">Sélectionner un fichier CSV</span>
                         <input type="file" id="csv-input" class="hidden" accept=".csv" />
                     </label>
+                    <button id="btn-parse-csv" class="hidden"></button>
                 </div>
             </div>
         </section>
@@ -75,6 +86,7 @@
                     <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
                     <p class="font-semibold text-indigo-900">Conversion en cours...</p>
                 </div>
+                <button id="btn-go-route" class="hidden"></button>
             </div>
         </section>
 
@@ -82,18 +94,19 @@
         <section id="step-route" class="step-view">
             <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
                 <h2 class="text-2xl font-bold mb-4 text-slate-800">Calcul des itinéraires</h2>
-                <div class="bg-slate-900 text-green-400 p-6 rounded-xl font-mono text-sm h-64 overflow-y-auto mb-6 shadow-inner" id="route-logs">> Initialisation du moteur d'itinéraires...</div>
+                <div class="bg-slate-900 text-green-400 p-6 rounded-xl font-mono text-sm h-64 overflow-y-auto mb-6 shadow-inner" id="route-logs">> Initialisation...</div>
             </div>
         </section>
 
         <!-- STEP 4: MAP DISPLAY -->
         <section id="step-map" class="step-view">
             <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-                <!-- Panneau de sauvegarde Cloud -->
+                
+                <!-- PANNEAU DE CONFIGURATION SAUVEGARDE -->
                 <div class="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-4 items-end">
                     <div class="flex-grow min-w-[200px]">
                         <label class="block text-[10px] uppercase font-bold text-slate-500 mb-1">Nom du Site</label>
-                        <input type="text" id="input-site-name" placeholder="Ex: Siège Social" class="w-full p-2 text-sm rounded border border-slate-300 outline-none focus:ring-2 focus:ring-indigo-500">
+                        <input type="text" id="input-site-name" placeholder="Ex: Bureau Central" class="w-full p-2 text-sm rounded border border-slate-300 outline-none focus:ring-2 focus:ring-indigo-500">
                     </div>
                     <div class="flex-grow min-w-[200px]">
                         <label class="block text-[10px] uppercase font-bold text-slate-500 mb-1">Ville</label>
@@ -105,12 +118,18 @@
                     </button>
                 </div>
 
+                <!-- ZONE CARTE -->
                 <div id="map-container"></div>
+                
+                <!-- TERMINAL DE LOGS CLOUD -->
+                <div id="cloud-logs" class="log-terminal">
+                    > En attente d'une action...
+                </div>
                 
                 <div class="p-4 bg-white border-t border-slate-100 flex justify-between items-center">
                     <div class="flex items-center space-x-2">
                         <span class="flex h-2 w-2 rounded-full bg-emerald-500"></span>
-                        <span class="text-xs font-bold text-slate-500 uppercase">Analyse terminée</span>
+                        <span class="text-xs font-bold text-slate-500 uppercase tracking-tighter">Heatmap générée dynamiquement</span>
                     </div>
                     <button onclick="location.reload()" class="text-xs font-bold text-indigo-600 hover:text-indigo-800 uppercase tracking-tighter transition-colors">Relancer une analyse</button>
                 </div>
@@ -119,7 +138,6 @@
 
     </main>
 
-    <!-- Point d'entrée de l'application -->
     <script type="module" src="main.js"></script>
 </body>
 </html>
