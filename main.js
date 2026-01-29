@@ -5,8 +5,8 @@
 
 // Importation des modules (pattern named export)
 import { CSVParser } from './modules/csv_parser.js';
-// Note: Les imports suivants supposent que vous créerez ces fichiers sur le même modèle
-// import { Geocoder } from './modules/geocoder.js';
+import { Geocoder } from './modules/geocoder.js';
+// Note: Les imports suivants seront à créer sur le même modèle
 // import { RouterAPI } from './modules/router_api.js';
 // import { Settings } from './modules/settings.js';
 // import { MapDisplay } from './modules/map_display.js';
@@ -30,8 +30,9 @@ const App = {
     init() {
         console.log("[App] Initialisation de l'orchestrateur...");
         
-        // Initialisation du premier module
+        // Initialisation des modules
         CSVParser.init();
+        Geocoder.init();
 
         // Écoute de l'événement de navigation personnalisé
         window.addEventListener('nextStep', (event) => this.handleNavigation(event));
@@ -46,14 +47,14 @@ const App = {
 
         console.log(`[App] Transition vers : ${next}`);
 
-        // 1. Mise à jour de l'état atomique
+        // 1. Mise à jour de l'état atomique (Fusion)
         this.appState = { 
             ...this.appState, 
             ...data, 
             currentStep: next 
         };
 
-        // 2. Logique de routage (chargement des modules cibles si besoin)
+        // 2. Logique de routage (chargement des modules cibles)
         this.triggerModuleLogic(next);
 
         // 3. Mise à jour visuelle de l'interface
@@ -64,15 +65,23 @@ const App = {
      * Déclenche la logique spécifique d'un module lors de l'entrée dans une section
      */
     triggerModuleLogic(stepId) {
-        // Exemple de couplage faible pour les modules dépendants de l'état
-        if (stepId === 'step-geo') {
-            // Geocoder.process(this.appState.rawData);
-            const log = document.getElementById('geo-log');
-            if(log) log.innerText = `Données reçues pour géocodage : ${this.appState.rawData?.length || 0} lignes.`;
-        }
-        
-        if (stepId === 'step-map') {
-            // MapDisplay.render(this.appState);
+        switch(stepId) {
+            case 'step-geo':
+                // On lance automatiquement le géocodage avec les données du CSV
+                if (this.appState.rawData) {
+                    Geocoder.startGeocoding(this.appState.rawData);
+                }
+                break;
+            
+            case 'step-route':
+                // Initialiser le module de routage ici
+                const log = document.getElementById('route-logs');
+                if(log) log.innerHTML += `<br>> Données reçues : ${this.appState.coordinates?.length || 0} points géocodés.`;
+                break;
+                
+            case 'step-map':
+                // MapDisplay.render(this.appState);
+                break;
         }
     },
 
@@ -80,12 +89,10 @@ const App = {
      * Mise à jour de la visibilité des sections et de la barre de progression
      */
     updateUI(stepId) {
-        // Changement de vue
         document.querySelectorAll('.step-view').forEach(section => {
             section.classList.toggle('active', section.id === stepId);
         });
 
-        // Mise à jour de la barre de progression
         const index = this.stepsOrder.indexOf(stepId);
         if (index !== -1) {
             const progress = ((index + 1) / this.stepsOrder.length) * 100;
