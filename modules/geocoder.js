@@ -1,70 +1,53 @@
 /**
  * modules/geocoder.js
- * Géocodage avec priorité BAN, gestion des délais et groupement par employeur.
- * Mise à jour : Ajout de logs de débogage pour vérifier les coordonnées exactes.
+ * Automatisation : Passe au routeur dès que le géocodage est fini.
  */
 export const Geocoder = {
     processedData: [],
     apiStats: { ban: { s: 0, f: 0 }, nom: { s: 0, f: 0 } },
 
     init() {
+        // Le bouton "Suivant" peut rester pour le mode manuel, 
+        // mais il sera court-circuité par l'auto-next.
         const btnNext = document.getElementById('btn-go-route');
-        if (btnNext) {
-            btnNext.style.display = 'none';
-            btnNext.addEventListener('click', () => this.emitNextStep());
-        }
+        if (btnNext) btnNext.addEventListener('click', () => this.emitNextStep());
     },
 
     async startGeocoding(data) {
-        console.log("[Geocoder] Lancement du traitement de", data.length, "lignes...");
         this.processedData = [];
         const container = document.getElementById('step-geo');
         this.ensureProgressUI(container);
 
         const employerGroups = {};
         let currentLetter = 'a';
-        const totalRows = data.length;
-        const totalSteps = totalRows * 2; 
+        const total = data.length;
+        const totalSteps = total * 2;
 
         for (let i = 0; i < data.length; i++) {
             const pair = data[i];
             const currentStepBase = i * 2;
 
-            // --- ÉTAPE 1 : Géocodage Employé ---
-            const addrEmployee = pair['adresse employé'];
-            this.updateUI(currentStepBase, totalSteps, `Géocodage employé ${i + 1}/${totalRows}...`);
-            
+            // 1. Employé
+            this.updateUI(currentStepBase, totalSteps, `Géocodage employé ${i + 1}/${total}...`);
             await this.delay(1200);
-            const employeeCoords = await this.fetchWithFallback(addrEmployee);
-            
-            if (!employeeCoords) {
-                console.error(`[Geocoder] ❌ Échec critique pour l'employé : ${addrEmployee}`);
-                continue; 
-            }
-            console.log(`[Geocoder] ✅ Employé trouvé : ${addrEmployee} -> [Lat: ${employeeCoords.lat}, Lon: ${employeeCoords.lon}]`);
+            const employeeCoords = await this.fetchWithFallback(pair['adresse employé']);
+            if (!employeeCoords) continue;
 
-            // --- ÉTAPE 2 : Géocodage Employeur (avec cache/groupes) ---
+            // 2. Employeur
+            const site = pair['adresse employeur'];
+            this.updateUI(currentStepBase + 1, totalSteps, `Géocodage employeur ${i + 1}/${total}...`);
+
             let employerCoords;
             let groupId;
-            const site = pair['adresse employeur'];
-
-            this.updateUI(currentStepBase + 1, totalSteps, `Géocodage employeur ${i + 1}/${totalRows}...`);
 
             if (employerGroups[site]) {
                 employerCoords = employerGroups[site].coords;
                 groupId = employerGroups[site].groupId;
-                console.log(`[Geocoder] 💡 Employeur déjà connu (Cache) : ${site}`);
                 await this.delay(300);
             } else {
                 await this.delay(1200);
                 employerCoords = await this.fetchWithFallback(site);
-                
-                if (!employerCoords) {
-                    console.error(`[Geocoder] ❌ Échec critique pour l'employeur : ${site}`);
-                    continue;
-                }
-
-                console.log(`[Geocoder] ✅ Employeur trouvé : ${site} -> [Lat: ${employerCoords.lat}, Lon: ${employerCoords.lon}]`);
+                if (!employerCoords) continue;
 
                 groupId = currentLetter;
                 employerGroups[site] = { coords: employerCoords, groupId: currentLetter, count: 0 };
@@ -80,27 +63,24 @@ export const Geocoder = {
                 start_lon: employeeCoords.lon,
                 end_lat: employerCoords.lat,
                 end_lon: employerCoords.lon,
-                employee_address: addrEmployee,
+                employee_address: pair['adresse employé'],
                 employer_address: site
             });
         }
 
-        this.updateUI(totalSteps, totalSteps, `Géocodage terminé ! ${this.processedData.length} trajets prêts.`);
+        this.updateUI(totalSteps, totalSteps, "Géocodage terminé ! Préparation du routage...");
         
-        const btnNext = document.getElementById('btn-go-route');
-        if (btnNext) btnNext.style.display = 'block';
+        // AUTOMATISATION : On attend un court instant avant de passer à l'étape suivante
+        await this.delay(800);
+        this.emitNextStep();
     },
 
     async fetchWithFallback(address) {
-        // Tente BAN d'abord (Excellent pour les adresses françaises)
         let res = await this.callBAN(address);
         if (res) { this.apiStats.ban.s++; return res; }
-        
-        // Fallback Nominatim (Meilleur pour les noms de lieux/enseignes comme "Monoprix")
         await this.delay(500);
         res = await this.callNominatim(address);
         if (res) { this.apiStats.nom.s++; return res; }
-        
         return null;
     },
 
@@ -111,7 +91,7 @@ export const Geocoder = {
             const d = await r.json();
             if (d.features?.length > 0) {
                 const c = d.features[0].geometry.coordinates;
-                return { lat: c[1], lon: c[0] }; // BAN renvoie [Lon, Lat]
+                return { lat: c[1], lon: c[0] };
             }
         } catch(e) { return null; }
     },
