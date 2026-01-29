@@ -1,6 +1,6 @@
 /**
  * modules/map_display.js
- * Gère le rendu Deck.gl et la sauvegarde Cloud vers Google Sheets (8 colonnes).
+ * Ordre : 2km au-dessus. Opacité : 15%. Sauvegarde : 8 colonnes.
  */
 
 export const MapDisplay = {
@@ -8,9 +8,7 @@ export const MapDisplay = {
     lastState: null,
 
     render(state) {
-        console.log("[MapDisplay] Rendu de la carte...");
         this.lastState = state;
-
         if (!state.routes || state.routes.length === 0) return;
 
         const saveBtn = document.getElementById('btn-cloud-save');
@@ -25,16 +23,12 @@ export const MapDisplay = {
         state.routes.forEach(route => {
             if (route.status === 'success' && route.geometry) {
                 const coords = this.decodePolyline(route.geometry);
-                allTrajectoires.push({
-                    type: "Feature",
-                    properties: { id: route.id, dist: route.distance_km },
-                    geometry: { type: "LineString", coordinates: coords }
-                });
+                allTrajectoires.push({ type: "Feature", geometry: { type: "LineString", coordinates: coords } });
                 coords.forEach(p => allHeatmapPoints.push({ coords: p }));
             }
         });
 
-        // Tri des isochrones pour l'affichage (2km au dessus)
+        // TRI POUR EMPILEMENT : On trie pour avoir le 10km en premier dans le tableau (fond) et 2km en dernier (top)
         const isochroneFeatures = state.isochrones 
             ? [...state.isochrones].sort((a, b) => b.properties.range_km - a.properties.range_km) 
             : [];
@@ -43,30 +37,29 @@ export const MapDisplay = {
             new deck.TileLayer({
                 id: 'base-map-tiles',
                 data: 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-                minZoom: 0, maxZoom: 19,
                 renderSubLayers: props => {
                     const { bbox: { west, south, east, north } } = props.tile;
                     return new deck.BitmapLayer(props, { data: null, image: props.data, bounds: [west, south, east, north] });
                 }
             }),
-            // Isochrones (15% opacité)
+
             new deck.GeoJsonLayer({
                 id: 'isochrones-layer',
                 data: { type: "FeatureCollection", features: isochroneFeatures },
                 pickable: true, stroked: true, filled: true,
-                opacity: 0.15,
+                opacity: 0.15, // Consigne : 15% opacité
                 getFillColor: d => this.getIsochroneColor(d.properties.range_km),
                 getLineColor: [255, 255, 255, 100],
                 getLineWidth: 1
             }),
-            // Heatmap
+
             new deck.HeatmapLayer({
                 id: 'heatmap-layer',
                 data: allHeatmapPoints,
                 getPosition: d => d.coords,
                 radiusPixels: 35, intensity: 1, threshold: 0.05
             }),
-            // Trajets (Invisibles)
+
             new deck.GeoJsonLayer({
                 id: 'routes-layer-internal',
                 data: { type: "FeatureCollection", features: allTrajectoires },
@@ -88,32 +81,26 @@ export const MapDisplay = {
     },
 
     getIsochroneColor(km) {
-        if (km <= 2) return [46, 204, 113];
-        if (km <= 5) return [241, 196, 15];
-        return [230, 126, 34];
+        if (km <= 2) return [46, 204, 113];   // Vert
+        if (km <= 5) return [241, 196, 15];  // Jaune
+        return [230, 126, 34];               // Orange (10km)
     },
 
     async saveToSheets(state) {
         const siteName = document.getElementById('input-site-name')?.value.trim();
         const cityName = document.getElementById('input-city')?.value.trim();
         const btn = document.getElementById('btn-cloud-save');
-
-        if (!siteName || !cityName) {
-            alert("Veuillez renseigner le Nom du site et la Ville.");
-            return;
-        }
+        if (!siteName || !cityName) { alert("Remplissez les champs Site et Ville."); return; }
 
         btn.disabled = true;
-        btn.innerHTML = `<span class="loader mr-2"></span>Envoi...`;
+        btn.innerHTML = `<span class="loader mr-2"></span>Export...`;
 
         try {
-            // CSV Analyse
             const analysisData = state.routes.map(r => ({
                 id: r.id, start_lat: r.start_lat, start_lon: r.start_lon, end_lat: r.end_lat, end_lon: r.end_lon,
                 distance_km: r.distance_km || '', duration_minutes: r.duration_min || '', status: r.status, error: r.error || ''
             }));
 
-            // GeoJSONs
             const ptsGeo = { type: "FeatureCollection", features: state.coordinates.flatMap(c => [
                 { type: "Feature", properties: { id: c.id, type: "dep" }, geometry: { type: "Point", coordinates: [c.start_lon, c.start_lat] } },
                 { type: "Feature", properties: { id: c.id, type: "arr" }, geometry: { type: "Point", coordinates: [c.end_lon, c.end_lat] } }
@@ -123,13 +110,12 @@ export const MapDisplay = {
                 type: "Feature", properties: { id: r.id }, geometry: { type: "LineString", coordinates: this.decodePolyline(r.geometry) }
             }))};
 
-            // Fonction helper pour filtrer les isochrones
+            // FILTRAGE DES ISOCHRONES PAR DISTANCE POUR LES COLONNES 6, 7, 8
             const getIsoByKm = (km) => ({
                 type: "FeatureCollection",
                 features: (state.isochrones || []).filter(f => f.properties.range_km === km)
             });
 
-            // Payload 8 Colonnes
             const payload = {
                 field1: siteName,
                 field2: cityName,
@@ -142,22 +128,14 @@ export const MapDisplay = {
             };
 
             const url = "https://script.google.com/macros/s/AKfycbxgTYcx-62MBamAawDtt3IMgMAFCkudO49be8amsULPoeNkXiYLuh3dXK8zLd9u-hoyAA/exec";
+            await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
 
-            await fetch(url, {
-                method: 'POST',
-                mode: 'no-cors',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify(payload)
-            });
-
-            alert("Données sauvegardées avec succès !");
-
+            alert("Données sauvegardées (8 colonnes) !");
         } catch (error) {
             console.error(error);
-            alert("Erreur lors de l'envoi.");
         } finally {
             btn.disabled = false;
-            btn.innerHTML = `<span>Sauvegarder (Sheets)</span>`;
+            btn.innerHTML = `<span>Sauvegarder les données</span>`;
         }
     },
 
