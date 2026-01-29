@@ -1,227 +1,127 @@
 /**
  * modules/geocoder.js
- * Gère la conversion des adresses textuelles en coordonnées GPS.
- * Priorité : BAN (Base Adresse Nationale) -> Nominatim (Fallback).
- * Inclut une logique de retry pour gérer les erreurs 504 et 429.
+ * Géocodage avec priorité BAN, gestion des délais et groupement par employeur.
  */
-
 export const Geocoder = {
     processedData: [],
-    apiStats: {
-        ban: { success: 0, failed: 0 },
-        nominatim: { success: 0, failed: 0 },
-        totalFailed: 0
-    },
+    apiStats: { ban: { s: 0, f: 0 }, nom: { s: 0, f: 0 } },
 
     init() {
-        console.log("[Geocoder] Module prêt. Priorité : BAN.");
         const btnNext = document.getElementById('btn-go-route');
-        if (btnNext) {
-            btnNext.style.display = 'none';
-            btnNext.addEventListener('click', () => this.emitNextStep());
-        }
+        if (btnNext) btnNext.addEventListener('click', () => this.emitNextStep());
     },
 
     async startGeocoding(data) {
-        console.log("[Geocoder] Début du traitement...");
+        console.log("[Geocoder] Lancement du traitement...");
         this.processedData = [];
-        this.resetStats();
-        
         const container = document.getElementById('step-geo');
-        if (!container) return;
-
-        const statusText = container.querySelector('p.font-semibold') || { innerText: "" };
-        const btnNext = document.getElementById('btn-go-route');
+        this.ensureProgressUI(container);
 
         const employerGroups = {};
         let currentLetter = 'a';
-        const totalItems = data.length;
-
-        this.ensureProgressElements(container);
+        const total = data.length;
 
         for (let i = 0; i < data.length; i++) {
             const pair = data[i];
-            const addrEmployee = pair['adresse employé'];
-            const addrEmployer = pair['adresse employeur'];
+            this.updateUI(i, total, `Traitement : ${pair['adresse employé']}`);
 
-            this.updateProgressUI(i, totalItems, `Traitement ${i+1}/${totalItems} : ${addrEmployee}`);
+            // 1. Géocodage Employé
+            await this.delay(1200);
+            const employeeCoords = await this.fetchWithFallback(pair['adresse employé']);
+            if (!employeeCoords) continue;
 
-            // 1. Géocodage Employé (BAN d'abord)
-            await this.delay(800); 
-            const employeeCoords = await this.fetchWithFallback(addrEmployee);
-
-            if (!employeeCoords) {
-                this.apiStats.totalFailed++;
-                continue;
-            }
-
-            // 2. Géocodage Employeur
+            // 2. Géocodage Employeur (avec cache/groupes)
             let employerCoords;
             let groupId;
+            const site = pair['adresse employeur'];
 
-            if (employerGroups[addrEmployer]) {
-                employerCoords = employerGroups[addrEmployer].coords;
-                groupId = employerGroups[addrEmployer].groupId;
+            if (employerGroups[site]) {
+                employerCoords = employerGroups[site].coords;
+                groupId = employerGroups[site].groupId;
             } else {
-                await this.delay(800);
-                employerCoords = await this.fetchWithFallback(addrEmployer);
-
-                if (!employerCoords) {
-                    this.apiStats.totalFailed++;
-                    continue;
-                }
+                await this.delay(1200);
+                employerCoords = await this.fetchWithFallback(site);
+                if (!employerCoords) continue;
 
                 groupId = currentLetter;
-                employerGroups[addrEmployer] = { coords: employerCoords, groupId: currentLetter, count: 0 };
+                employerGroups[site] = { coords: employerCoords, groupId: currentLetter, count: 0 };
                 currentLetter = String.fromCharCode(currentLetter.charCodeAt(0) + 1);
             }
 
-            employerGroups[addrEmployer].count++;
-            const id = `employé ${groupId}${employerGroups[addrEmployer].count}`;
+            employerGroups[site].count++;
+            const id = `employé ${groupId}${employerGroups[site].count}`;
 
             this.processedData.push({
-                id: id,
+                id,
                 start_lat: employeeCoords.lat,
                 start_lon: employeeCoords.lon,
                 end_lat: employerCoords.lat,
                 end_lon: employerCoords.lon,
-                employee_address: addrEmployee,
-                employer_address: addrEmployer,
-                source: employeeCoords.source
+                employee_address: pair['adresse employé'],
+                employer_address: site
             });
         }
 
-        statusText.innerText = "Géocodage terminé !";
-        if (statusText.classList) {
-            statusText.classList.remove('text-indigo-900');
-            statusText.classList.add('text-emerald-600');
-        }
-        
-        if (btnNext) btnNext.style.display = 'block';
-        this.updateProgressUI(totalItems, totalItems, `Terminé : ${this.processedData.length} paires converties.`);
+        this.updateUI(total, total, "Géocodage terminé !");
+        document.getElementById('btn-go-route').style.display = 'block';
     },
 
-    /**
-     * Tente la BAN en premier, puis Nominatim en cas d'échec.
-     */
     async fetchWithFallback(address) {
-        // PRIORITÉ 1 : BAN avec retries
-        let result = await this.fetchWithRetry(() => this.callBAN(address), 2);
+        // Tente BAN d'abord
+        let res = await this.callBAN(address);
+        if (res) { this.apiStats.ban.s++; return res; }
         
-        if (result) {
-            this.apiStats.ban.success++;
-            return { ...result, source: 'BAN' };
-        }
-
-        this.apiStats.ban.failed++;
-        console.warn(`[Geocoder] Échec BAN pour : ${address}. Tentative Nominatim...`);
+        // Fallback Nominatim
+        await this.delay(500);
+        res = await this.callNominatim(address);
+        if (res) { this.apiStats.nom.s++; return res; }
         
-        // Délai avant de basculer sur Nominatim
-        await this.delay(1000);
-        
-        // PRIORITÉ 2 (Fallback) : Nominatim avec retries
-        result = await this.fetchWithRetry(() => this.callNominatim(address), 2);
-        
-        if (result) {
-            this.apiStats.nominatim.success++;
-            return { ...result, source: 'Nominatim' };
-        }
-
-        this.apiStats.nominatim.failed++;
         return null;
     },
 
-    async fetchWithRetry(apiCall, maxRetries = 2) {
-        for (let i = 0; i < maxRetries; i++) {
-            try {
-                const result = await apiCall();
-                if (result) return result;
-                if (result === null) return null; 
-            } catch (error) {
-                console.warn(`[Geocoder] Erreur réseau (tentative ${i+1}), nouvel essai...`);
-                await this.delay(1500 * (i + 1));
+    async callBAN(addr) {
+        try {
+            const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(addr)}&limit=1`;
+            const r = await fetch(url);
+            const d = await r.json();
+            if (d.features?.length > 0) {
+                const c = d.features[0].geometry.coordinates;
+                return { lat: c[1], lon: c[0] };
             }
-        }
-        return null;
+        } catch(e) { return null; }
     },
 
-    /**
-     * Appel à l'API Adresse (BAN)
-     */
-    async callBAN(address) {
-        const query = encodeURIComponent(address.replace(';', ' '));
-        const response = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${query}&limit=1`);
-
-        if (response.status === 504 || response.status === 429) {
-            throw new Error(`BAN Server Error ${response.status}`);
-        }
-
-        if (!response.ok) return null;
-
-        const data = await response.json();
-        if (data.features?.length > 0) {
-            const coords = data.features[0].geometry.coordinates;
-            return { lat: coords[1], lon: coords[0] };
-        }
-        return null;
-    },
-
-    /**
-     * Appel à Nominatim (OSM)
-     */
-    async callNominatim(address) {
-        const query = encodeURIComponent(address.replace(';', ', ') + ", France");
-        const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}&limit=1&countrycodes=fr`, {
-            headers: { 'Accept-Language': 'fr' }
-        });
-
-        if (response.status === 504 || response.status === 429) {
-            throw new Error(`Nominatim Server Error ${response.status}`);
-        }
-
-        if (!response.ok) return null;
-        
-        const data = await response.json();
-        return data.length > 0 ? { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) } : null;
+    async callNominatim(addr) {
+        try {
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr + ', France')}&limit=1`;
+            const r = await fetch(url);
+            const d = await r.json();
+            if (d.length > 0) return { lat: parseFloat(d[0].lat), lon: parseFloat(d[0].lon) };
+        } catch(e) { return null; }
     },
 
     emitNextStep() {
         window.dispatchEvent(new CustomEvent('nextStep', {
-            detail: {
-                data: { coordinates: this.processedData },
-                next: 'step-route'
-            }
+            detail: { data: { coordinates: this.processedData }, next: 'step-route' }
         }));
     },
 
-    ensureProgressElements(container) {
+    ensureProgressUI(container) {
         if (!document.getElementById('geo-progress-bar')) {
-            const target = container.querySelector('div'); 
-            if (!target) return;
-
             const html = `
-                <div id="geo-ui-container" class="mt-4 mb-6">
-                    <div class="bg-slate-100 rounded-full h-2 overflow-hidden">
-                        <div id="geo-progress-bar" class="bg-indigo-500 h-full w-0 transition-all duration-300"></div>
-                    </div>
-                    <p id="geo-progress-text" class="text-xs text-slate-500 mt-2 italic text-center">Moteur : BAN (prioritaire) & Nominatim...</p>
-                </div>
-            `;
-            target.insertAdjacentHTML('afterbegin', html);
+                <div class="mb-6"><div class="bg-slate-100 rounded-full h-2 overflow-hidden">
+                <div id="geo-progress-bar" class="bg-indigo-500 h-full w-0 transition-all"></div>
+                </div><p id="geo-progress-text" class="text-xs text-center mt-2"></p></div>`;
+            container.querySelector('div').insertAdjacentHTML('afterbegin', html);
         }
     },
 
-    updateProgressUI(current, total, text) {
+    updateUI(curr, tot, txt) {
         const bar = document.getElementById('geo-progress-bar');
-        const label = document.getElementById('geo-progress-text');
-        const percent = total > 0 ? (current / total) * 100 : 0;
-        if (bar) bar.style.width = `${percent}%`;
-        if (label) label.innerText = text;
+        const lbl = document.getElementById('geo-progress-text');
+        if (bar) bar.style.width = `${(curr / tot) * 100}%`;
+        if (lbl) lbl.innerText = txt;
     },
 
-    delay(ms) { return new Promise(res => setTimeout(res, ms)); },
-    
-    resetStats() {
-        this.apiStats = { ban: { success: 0, failed: 0 }, nominatim: { success: 0, failed: 0 }, totalFailed: 0 };
-    }
+    delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 };
