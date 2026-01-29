@@ -1,53 +1,44 @@
 /**
  * modules/map_display.js
- * Gère le rendu cartographique via Deck.gl et la sauvegarde Cloud vers Google Sheets.
+ * Gère le rendu Deck.gl et la sauvegarde Cloud vers Google Sheets.
+ * Inclut un système de logging pour débugger l'envoi.
  */
 
 export const MapDisplay = {
     deckgl: null,
-    lastState: null, // Stockage temporaire du state pour la sauvegarde
+    lastState: null,
 
     /**
      * Initialisation du rendu cartographique
-     * @param {Object} state - L'état global (appState)
      */
     render(state) {
-        console.log("[MapDisplay] Début du rendu Deck.gl...");
+        console.log("[MapDisplay] Préparation du rendu...");
         this.lastState = state;
 
-        if (!state.routes || state.routes.length === 0) {
-            console.error("[MapDisplay] Aucune route à afficher.");
-            return;
-        }
+        if (!state.routes || state.routes.length === 0) return;
 
-        // Configuration du bouton de sauvegarde (une seule fois)
+        // Configurer le bouton de sauvegarde (une seule fois)
         const saveBtn = document.getElementById('btn-cloud-save');
         if (saveBtn && !saveBtn.dataset.init) {
             saveBtn.addEventListener('click', () => this.saveToSheets(this.lastState));
             saveBtn.dataset.init = "true";
         }
 
-        // 1. PRÉPARATION DES DONNÉES
         const allTrajectoires = [];
         const allHeatmapPoints = [];
 
         state.routes.forEach(route => {
             if (route.status === 'success' && route.geometry) {
                 const coords = this.decodePolyline(route.geometry);
-                
                 allTrajectoires.push({
                     type: "Feature",
                     properties: { id: route.id, dist: route.distance_km },
                     geometry: { type: "LineString", coordinates: coords }
                 });
-
-                coords.forEach(p => {
-                    allHeatmapPoints.push({ coords: p });
-                });
+                coords.forEach(p => allHeatmapPoints.push({ coords: p }));
             }
         });
 
-        // 2. CONFIGURATION DES COUCHES
         const layers = [
             new deck.TileLayer({
                 id: 'base-map-tiles',
@@ -63,7 +54,6 @@ export const MapDisplay = {
                     });
                 }
             }),
-
             new deck.HeatmapLayer({
                 id: 'heatmap-layer',
                 data: allHeatmapPoints,
@@ -72,7 +62,6 @@ export const MapDisplay = {
                 intensity: 1,
                 threshold: 0.05
             }),
-
             new deck.GeoJsonLayer({
                 id: 'routes-layer-internal',
                 data: { type: "FeatureCollection", features: allTrajectoires },
@@ -81,7 +70,6 @@ export const MapDisplay = {
             })
         ];
 
-        // 3. RENDER
         if (!this.deckgl) {
             this.deckgl = new deck.DeckGL({
                 container: 'map-container',
@@ -90,70 +78,75 @@ export const MapDisplay = {
                 layers: layers
             });
         } else {
-            this.deckgl.setProps({ 
-                layers: layers,
-                initialViewState: this.calculateInitialView(allHeatmapPoints) 
-            });
+            this.deckgl.setProps({ layers: layers, initialViewState: this.calculateInitialView(allHeatmapPoints) });
         }
     },
 
     /**
-     * Envoie les données consolidées vers Google Sheets
+     * Système de Logs Visuel
+     */
+    addCloudLog(msg, type = 'info') {
+        const terminal = document.getElementById('cloud-logs');
+        if (!terminal) return;
+        const color = type === 'error' ? '#f87171' : (type === 'success' ? '#4ad395' : '#38bdf8');
+        terminal.innerHTML += `<br><span style="color: ${color}">> ${msg}</span>`;
+        terminal.scrollTop = terminal.scrollHeight;
+    },
+
+    /**
+     * Sauvegarde Cloud vers Google Sheets
      */
     async saveToSheets(state) {
         const siteName = document.getElementById('input-site-name')?.value.trim();
         const cityName = document.getElementById('input-city')?.value.trim();
         const btn = document.getElementById('btn-cloud-save');
 
+        this.addCloudLog("Démarrage de la procédure de sauvegarde...");
+
         if (!siteName || !cityName) {
-            alert("Veuillez renseigner le nom du site et la ville avant de sauvegarder.");
+            this.addCloudLog("Erreur : Nom du site ou Ville manquant.", "error");
+            alert("Veuillez remplir les champs Nom du site et Ville.");
             return;
         }
 
-        if (!state.rawData || !state.routes) {
-            console.error("[MapDisplay] Données manquantes pour la sauvegarde.");
-            return;
-        }
-
-        // Feedback visuel
-        const originalBtnText = btn.innerHTML;
         btn.disabled = true;
-        btn.innerText = "Envoi en cours...";
+        btn.innerText = "Envoi...";
 
         try {
-            // file1 : CSV original
+            // file1 : RawData
             const file1 = state.rawData;
+            this.addCloudLog(`File 1 (Raw) prêt : ${file1.length} lignes.`);
 
-            // file2 : Points de départ/arrivée (GeoJSON)
+            // file2 : Points (GeoJSON)
             const file2 = {
                 type: "FeatureCollection",
-                features: state.coordinates.map(c => ([
+                features: state.coordinates.flatMap(c => [
                     {
                         type: "Feature",
-                        properties: { id: c.id, type: "depart", address: c.employee_address },
+                        properties: { id: c.id, type: "depart" },
                         geometry: { type: "Point", coordinates: [c.start_lon, c.start_lat] }
                     },
                     {
                         type: "Feature",
-                        properties: { id: c.id, type: "arrivee", address: c.employer_address },
+                        properties: { id: c.id, type: "arrivee" },
                         geometry: { type: "Point", coordinates: [c.end_lon, c.end_lat] }
                     }
-                ])).flat()
+                ])
             };
+            this.addCloudLog(`File 2 (Points) prêt : ${file2.features.length} points.`);
 
-            // file3 : Lignes d'itinéraires décodées (GeoJSON)
+            // file3 : Lignes (GeoJSON)
             const file3 = {
                 type: "FeatureCollection",
-                features: state.routes
-                    .filter(r => r.status === 'success')
-                    .map(r => ({
-                        type: "Feature",
-                        properties: { id: r.id, distance: r.distance_km, duration: r.duration_min },
-                        geometry: { type: "LineString", coordinates: this.decodePolyline(r.geometry) }
-                    }))
+                features: state.routes.filter(r => r.status === 'success').map(r => ({
+                    type: "Feature",
+                    properties: { id: r.id, dist: r.distance_km },
+                    geometry: { type: "LineString", coordinates: this.decodePolyline(r.geometry) }
+                }))
             };
+            this.addCloudLog(`File 3 (Lines) prêt : ${file3.features.length} tracés.`);
 
-            // Payload exact demandé
+            // Payload
             const payload = new URLSearchParams();
             payload.append('field1', siteName);
             payload.append('field2', cityName);
@@ -161,24 +154,28 @@ export const MapDisplay = {
             payload.append('field4', JSON.stringify(file2));
             payload.append('field5', JSON.stringify(file3));
 
+            this.addCloudLog("Payload généré. Envoi vers le script Google...");
+
             const url = "https://script.google.com/macros/s/AKfycbwTDUwHS5Z27PgGr3Vu73kwgUXQ4iJyXjwlB8faTVydZ4RyA8nQ_GWYzFdmify4EYLxYA/exec";
 
+            // Envoi POST no-cors
             await fetch(url, {
                 method: 'POST',
-                mode: 'no-cors', // Consigne
+                mode: 'no-cors',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: payload
             });
 
-            // Avec no-cors, on ne peut pas lire la réponse, on assume le succès si pas d'erreur réseau
+            this.addCloudLog("Requête envoyée avec succès (statut opaque via no-cors).", "success");
+            this.addCloudLog("Vérifiez votre Google Sheet dans quelques secondes.", "success");
             alert("Données sauvegardées !");
 
         } catch (error) {
-            console.error("[MapDisplay] Erreur sauvegarde Cloud:", error);
-            alert("Une erreur est survenue lors de l'envoi.");
+            this.addCloudLog(`Erreur réseau : ${error.message}`, "error");
+            alert("Échec de la connexion au serveur.");
         } finally {
             btn.disabled = false;
-            btn.innerHTML = originalBtnText;
+            btn.innerHTML = `<span>Sauvegarder les données</span>`;
         }
     },
 
