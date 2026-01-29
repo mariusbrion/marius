@@ -1,7 +1,7 @@
 /**
  * modules/map_display.js
  * Gère le rendu Deck.gl et la sauvegarde Cloud vers Google Sheets.
- * URL mise à jour avec le nouveau déploiement Google Apps Script.
+ * Version : CSV en 5ème colonne et GeoJSON séparés.
  */
 
 export const MapDisplay = {
@@ -95,7 +95,7 @@ export const MapDisplay = {
 
     /**
      * Sauvegarde Cloud vers Google Sheets
-     * Structure : Site (1), Ville (2), CSV (3), Points (4), Lignes (5)
+     * Nouvel Ordre : field1:Site, field2:Ville, field3:Points, field4:Lignes, field5:CSV
      */
     async saveToSheets(state) {
         const siteName = document.getElementById('input-site-name')?.value.trim();
@@ -105,16 +105,16 @@ export const MapDisplay = {
         this.addCloudLog("Déclenchement de la sauvegarde Cloud...");
 
         if (!siteName || !cityName) {
-            this.addCloudLog("Erreur : Champs site ou ville vides.", "error");
+            this.addCloudLog("Erreur : Nom du site ou ville manquants.", "error");
             alert("Veuillez renseigner le nom du site et la ville.");
             return;
         }
 
         btn.disabled = true;
-        btn.innerHTML = `<span class="loader mr-2"></span>Envoi en cours...`;
+        btn.innerHTML = `<span class="loader mr-2"></span>Envoi...`;
 
         try {
-            // 1. Préparation des Points (GeoJSON)
+            // 1. GeoJSON Points
             const pointsGeoJson = {
                 type: "FeatureCollection",
                 features: state.coordinates.flatMap(c => [
@@ -131,31 +131,34 @@ export const MapDisplay = {
                 ])
             };
 
-            // 2. Préparation des Lignes (GeoJSON)
+            // 2. GeoJSON Lignes
             const linesGeoJson = {
                 type: "FeatureCollection",
                 features: state.routes.filter(r => r.status === 'success').map(r => ({
                     type: "Feature",
-                    properties: { id: r.id, dist: r.distance_km },
+                    properties: { id: r.id, dist: r.distance_km, dur: r.duration_min },
                     geometry: { type: "LineString", coordinates: this.decodePolyline(r.geometry) }
                 }))
             };
 
-            // 3. Payload séparé en 5 champs correspondant au script Google
+            // 3. Payload avec CSV en field5
             const payload = {
                 field1: siteName,
                 field2: cityName,
-                field3: JSON.stringify(state.rawData),
-                field4: JSON.stringify(pointsGeoJson),
-                field5: JSON.stringify(linesGeoJson)
+                field3: JSON.stringify(pointsGeoJson), // Points en Col 3
+                field4: JSON.stringify(linesGeoJson),  // Lignes en Col 4
+                field5: JSON.stringify(state.rawData)  // CSV en Col 5
             };
 
-            this.addCloudLog(`Fichiers prêts : CSV (${(payload.field3.length / 1024).toFixed(1)} KB), Points (${(payload.field4.length / 1024).toFixed(1)} KB), Lignes (${(payload.field5.length / 1024).toFixed(1)} KB).`);
+            const csvSize = (payload.field5.length / 1024).toFixed(1);
+            const ptsSize = (payload.field3.length / 1024).toFixed(1);
+            const lnsSize = (payload.field4.length / 1024).toFixed(1);
 
-            // Nouvelle URL fournie par l'utilisateur
+            this.addCloudLog(`Préparation finie. Points: ${ptsSize}KB, Lignes: ${lnsSize}KB, CSV: ${csvSize}KB.`);
+
             const url = "https://script.google.com/macros/s/AKfycbxgTYcx-62MBamAawDtt3IMgMAFCkudO49be8amsULPoeNkXiYLuh3dXK8zLd9u-hoyAA/exec";
 
-            this.addCloudLog("Envoi vers Google Sheets (no-cors)...");
+            this.addCloudLog("Envoi vers Google Sheets...");
 
             await fetch(url, {
                 method: 'POST',
@@ -165,13 +168,12 @@ export const MapDisplay = {
                 body: JSON.stringify(payload)
             });
 
-            this.addCloudLog("Données transmises ! L'insertion dans le Sheet peut prendre quelques secondes.", "success");
+            this.addCloudLog("Transmission réussie ! Vérifiez la 5ème colonne de votre Sheet.", "success");
             alert("Données sauvegardées !");
 
         } catch (error) {
-            this.addCloudLog(`Erreur technique : ${error.message}`, "error");
+            this.addCloudLog(`Erreur : ${error.message}`, "error");
             console.error(error);
-            alert("Erreur lors de la sauvegarde.");
         } finally {
             btn.disabled = false;
             btn.innerHTML = `<span>Sauvegarder les données</span>`;
