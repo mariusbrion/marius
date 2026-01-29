@@ -5,47 +5,42 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CartoProcessor Pro | Analyse & Visualisation</title>
 
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-
-    <!-- Mapbox GL JS & CSS -->
     <script src="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet" />
-
-    <!-- Deck.gl -->
     <script src="https://unpkg.com/deck.gl@latest/dist.min.js"></script>
-
-    <!-- PapaParse -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 
     <style>
         .step-view { display: none; }
         .step-view.active { display: block; }
         .progress-bar { transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
+        
+        /* Carte agrandie pour occuper l'espace restant */
         #map-container {
             width: 100%;
-            height: 500px; /* Hauteur fixe pour laisser de la place aux logs */
+            height: calc(100vh - 180px); 
             position: relative;
             background: #e2e8f0;
         }
-        .log-terminal {
-            background: #1e293b;
-            color: #38bdf8;
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 11px;
-            height: 120px;
-            overflow-y: auto;
-            padding: 10px;
-            border-top: 2px solid #0f172a;
+        
+        .loader {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #6366f1;
+            border-radius: 50%;
+            width: 14px;
+            height: 14px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
         }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-900 font-sans min-h-screen flex flex-col">
+<body class="bg-slate-50 text-slate-900 font-sans min-h-screen flex flex-col overflow-hidden">
 
-    <!-- NAVIGATION ET PROGRESSION -->
     <nav class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
-        <div class="max-w-6xl mx-auto px-4 py-4">
-            <div class="flex items-center justify-between mb-3">
+        <div class="max-w-7xl mx-auto px-4 py-3">
+            <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center space-x-2">
                     <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white">
                         <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /></svg>
@@ -60,80 +55,66 @@
         </div>
     </nav>
 
-    <main class="flex-grow max-w-6xl mx-auto w-full p-4 md:p-8">
+    <main class="flex-grow w-full h-full relative">
 
-        <!-- STEP 1: CSV PARSER -->
-        <section id="step-csv" class="step-view active animate-in fade-in duration-500">
-            <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-8 text-center">
-                <h2 class="text-3xl font-bold mb-2">Importation des données</h2>
+        <!-- STEP 1: CSV -->
+        <section id="step-csv" class="step-view active h-full flex flex-col justify-center items-center p-8">
+            <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-12 text-center max-w-2xl w-full">
+                <h2 class="text-3xl font-bold mb-4">Importation des données</h2>
                 <p class="text-slate-500 mb-8">Déposez votre fichier CSV pour lancer le traitement automatique.</p>
-                <div class="max-w-md mx-auto">
-                    <label class="flex flex-col items-center px-4 py-10 bg-slate-50 text-slate-400 rounded-xl border-2 border-dashed border-slate-300 cursor-pointer hover:bg-slate-100 hover:border-indigo-400 transition-all group">
-                        <svg class="w-12 h-12 mb-3 group-hover:text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                        <span class="text-sm font-medium text-slate-600">Sélectionner un fichier CSV</span>
-                        <input type="file" id="csv-input" class="hidden" accept=".csv" />
-                    </label>
-                    <button id="btn-parse-csv" class="hidden"></button>
-                </div>
+                <label class="flex flex-col items-center px-4 py-16 bg-slate-50 text-slate-400 rounded-xl border-2 border-dashed border-slate-300 cursor-pointer hover:bg-slate-100 hover:border-indigo-400 transition-all group w-full">
+                    <svg class="w-16 h-16 mb-4 group-hover:text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    <span class="text-lg font-medium text-slate-600">Sélectionner un fichier CSV</span>
+                    <input type="file" id="csv-input" class="hidden" accept=".csv" />
+                </label>
+                <button id="btn-parse-csv" class="hidden"></button>
             </div>
         </section>
 
         <!-- STEP 2: GEOCODER -->
-        <section id="step-geo" class="step-view">
-            <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
+        <section id="step-geo" class="step-view h-full flex flex-col justify-center items-center p-8">
+            <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-12 w-full max-w-2xl">
                 <h2 class="text-2xl font-bold mb-6">Géocodage des adresses</h2>
                 <div class="flex items-center space-x-4 p-6 bg-indigo-50 rounded-xl border border-indigo-100">
                     <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-                    <p class="font-semibold text-indigo-900">Conversion en cours...</p>
+                    <p class="font-semibold text-indigo-900">Analyse géographique en cours...</p>
                 </div>
                 <button id="btn-go-route" class="hidden"></button>
             </div>
         </section>
 
-        <!-- STEP 3: ROUTE API -->
-        <section id="step-route" class="step-view">
-            <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
+        <!-- STEP 3: ROUTE -->
+        <section id="step-route" class="step-view h-full flex flex-col justify-center items-center p-8">
+            <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-12 w-full max-w-2xl">
                 <h2 class="text-2xl font-bold mb-4 text-slate-800">Calcul des itinéraires</h2>
                 <div class="bg-slate-900 text-green-400 p-6 rounded-xl font-mono text-sm h-64 overflow-y-auto mb-6 shadow-inner" id="route-logs">> Initialisation...</div>
+                <button id="btn-go-settings" class="hidden"></button>
             </div>
         </section>
 
-        <!-- STEP 4: MAP DISPLAY -->
-        <section id="step-map" class="step-view">
-            <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-                
-                <!-- PANNEAU DE CONFIGURATION SAUVEGARDE -->
-                <div class="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-4 items-end">
-                    <div class="flex-grow min-w-[200px]">
-                        <label class="block text-[10px] uppercase font-bold text-slate-500 mb-1">Nom du Site</label>
-                        <input type="text" id="input-site-name" placeholder="Ex: Bureau Central" class="w-full p-2 text-sm rounded border border-slate-300 outline-none focus:ring-2 focus:ring-indigo-500">
+        <!-- STEP 4: MAP (Interface Pro & Full Screen) -->
+        <section id="step-map" class="step-view h-full relative">
+            <!-- Barre de contrôle flottante -->
+            <div class="absolute top-4 left-4 right-4 z-10 bg-white/90 backdrop-blur-md p-3 rounded-xl shadow-lg border border-slate-200 flex flex-wrap gap-4 items-center justify-between">
+                <div class="flex gap-4 flex-grow">
+                    <div class="flex-grow">
+                        <input type="text" id="input-site-name" placeholder="Nom du Site" class="w-full p-2 text-sm rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-indigo-500 bg-white/50">
                     </div>
-                    <div class="flex-grow min-w-[200px]">
-                        <label class="block text-[10px] uppercase font-bold text-slate-500 mb-1">Ville</label>
-                        <input type="text" id="input-city" placeholder="Ex: Bordeaux" class="w-full p-2 text-sm rounded border border-slate-300 outline-none focus:ring-2 focus:ring-indigo-500">
+                    <div class="flex-grow">
+                        <input type="text" id="input-city" placeholder="Ville" class="w-full p-2 text-sm rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-indigo-500 bg-white/50">
                     </div>
-                    <button id="btn-cloud-save" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded font-bold text-sm transition-all flex items-center space-x-2">
-                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
-                        <span>Sauvegarder les données</span>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="location.reload()" class="text-slate-500 hover:text-slate-700 px-4 py-2 text-sm font-bold transition-colors">Nouveau</button>
+                    <button id="btn-cloud-save" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-bold text-sm transition-all shadow-md shadow-indigo-200 flex items-center space-x-2">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                        <span>Sauvegarder (Sheets)</span>
                     </button>
                 </div>
-
-                <!-- ZONE CARTE -->
-                <div id="map-container"></div>
-                
-                <!-- TERMINAL DE LOGS CLOUD -->
-                <div id="cloud-logs" class="log-terminal">
-                    > En attente d'une action...
-                </div>
-                
-                <div class="p-4 bg-white border-t border-slate-100 flex justify-between items-center">
-                    <div class="flex items-center space-x-2">
-                        <span class="flex h-2 w-2 rounded-full bg-emerald-500"></span>
-                        <span class="text-xs font-bold text-slate-500 uppercase tracking-tighter">Heatmap générée dynamiquement</span>
-                    </div>
-                    <button onclick="location.reload()" class="text-xs font-bold text-indigo-600 hover:text-indigo-800 uppercase tracking-tighter transition-colors">Relancer une analyse</button>
-                </div>
             </div>
+
+            <!-- Carte Plein Écran -->
+            <div id="map-container" style="height: 100%; width: 100%;"></div>
         </section>
 
     </main>
