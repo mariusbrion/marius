@@ -1,23 +1,19 @@
 /**
  * modules/map_display.js
  * Gère le rendu Deck.gl et la sauvegarde Cloud vers Google Sheets.
- * Correction : Génération du CSV d'analyse complet pour la colonne 5.
+ * Ajout : Affichage des couches Isochrones (GeoJsonLayer).
  */
 
 export const MapDisplay = {
     deckgl: null,
     lastState: null,
 
-    /**
-     * Initialisation du rendu cartographique
-     */
     render(state) {
         console.log("[MapDisplay] Préparation du rendu...");
         this.lastState = state;
 
         if (!state.routes || state.routes.length === 0) return;
 
-        // Configurer le bouton de sauvegarde (une seule fois)
         const saveBtn = document.getElementById('btn-cloud-save');
         if (saveBtn && !saveBtn.dataset.init) {
             saveBtn.addEventListener('click', () => this.saveToSheets(this.lastState));
@@ -27,6 +23,7 @@ export const MapDisplay = {
         const allTrajectoires = [];
         const allHeatmapPoints = [];
 
+        // 1. Traitement des routes
         state.routes.forEach(route => {
             if (route.status === 'success' && route.geometry) {
                 const coords = this.decodePolyline(route.geometry);
@@ -38,6 +35,14 @@ export const MapDisplay = {
                 coords.forEach(p => allHeatmapPoints.push({ coords: p }));
             }
         });
+
+        // 2. Définition des couleurs pour les isochrones (Vert -> Rouge)
+        const isochroneColors = {
+            2: [39, 174, 96, 100],   // 2km - Vert
+            5: [241, 196, 15, 100],  // 5km - Jaune
+            10: [230, 126, 34, 100], // 10km - Orange
+            13: [231, 76, 60, 100]   // 13km - Rouge
+        };
 
         const layers = [
             new deck.TileLayer({
@@ -54,6 +59,25 @@ export const MapDisplay = {
                     });
                 }
             }),
+            
+            // --- NOUVELLE COUCHE : ISOCHRONES ---
+            new deck.GeoJsonLayer({
+                id: 'isochrone-layer',
+                data: { type: "FeatureCollection", features: state.isochrones || [] },
+                pickable: true,
+                stroked: true,
+                filled: true,
+                lineWidthMinPixels: 2,
+                getFillColor: d => {
+                    // OpenRouteService renvoie la distance en mètres (ex: 2000)
+                    const distKm = d.properties.value / 1000;
+                    return isochroneColors[distKm] || [100, 100, 100, 80];
+                },
+                getLineColor: [255, 255, 255, 150],
+                getLineWidth: 1,
+                opacity: 0.4
+            }),
+
             new deck.HeatmapLayer({
                 id: 'heatmap-layer',
                 data: allHeatmapPoints,
@@ -62,6 +86,7 @@ export const MapDisplay = {
                 intensity: 1,
                 threshold: 0.05
             }),
+
             new deck.GeoJsonLayer({
                 id: 'routes-layer-internal',
                 data: { type: "FeatureCollection", features: allTrajectoires },
@@ -82,9 +107,6 @@ export const MapDisplay = {
         }
     },
 
-    /**
-     * Système de Logs Visuel
-     */
     addCloudLog(msg, type = 'info') {
         const terminal = document.getElementById('cloud-logs');
         if (!terminal) return;
@@ -93,9 +115,6 @@ export const MapDisplay = {
         terminal.scrollTop = terminal.scrollHeight;
     },
 
-    /**
-     * Sauvegarde Cloud vers Google Sheets
-     */
     async saveToSheets(state) {
         const siteName = document.getElementById('input-site-name')?.value.trim();
         const cityName = document.getElementById('input-city')?.value.trim();
@@ -113,8 +132,6 @@ export const MapDisplay = {
         btn.innerHTML = `<span class="loader mr-2"></span>Sauvegarde...`;
 
         try {
-            // 1. GÉNERATION DU CSV D'ANALYSE (Format demandé)
-            // On transforme les objets 'routes' en format plat pour le CSV
             const analysisData = state.routes.map(r => ({
                 id: r.id,
                 start_lat: r.start_lat,
@@ -130,24 +147,22 @@ export const MapDisplay = {
             const csvContent = Papa.unparse(analysisData);
             this.addCloudLog(`CSV d'analyse généré : ${analysisData.length} lignes.`);
 
-            // 2. GeoJSON Points
             const pointsGeoJson = {
                 type: "FeatureCollection",
                 features: state.coordinates.flatMap(c => [
                     {
                         type: "Feature",
-                        properties: { id: c.id, type: "depart" },
+                        properties: { id: c.id, type: "depart", addr: c.employee_address },
                         geometry: { type: "Point", coordinates: [c.start_lon, c.start_lat] }
                     },
                     {
                         type: "Feature",
-                        properties: { id: c.id, type: "arrivee" },
+                        properties: { id: c.id, type: "arrivee", addr: c.employer_address },
                         geometry: { type: "Point", coordinates: [c.end_lon, c.end_lat] }
                     }
                 ])
             };
 
-            // 3. GeoJSON Lignes
             const linesGeoJson = {
                 type: "FeatureCollection",
                 features: state.routes.filter(r => r.status === 'success').map(r => ({
@@ -157,13 +172,12 @@ export const MapDisplay = {
                 }))
             };
 
-            // 4. Payload final (CSV en field5)
             const payload = {
                 field1: siteName,
                 field2: cityName,
                 field3: JSON.stringify(pointsGeoJson),
                 field4: JSON.stringify(linesGeoJson),
-                field5: csvContent // C'est ici que le CSV d'analyse est envoyé
+                field5: csvContent
             };
 
             const url = "https://script.google.com/macros/s/AKfycbxgTYcx-62MBamAawDtt3IMgMAFCkudO49be8amsULPoeNkXiYLuh3dXK8zLd9u-hoyAA/exec";
@@ -212,3 +226,5 @@ export const MapDisplay = {
         return { longitude: avgLon, latitude: avgLat, zoom: 11, pitch: 0, bearing: 0 };
     }
 };
+
+
