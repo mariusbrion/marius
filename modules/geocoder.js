@@ -1,7 +1,7 @@
 /**
  * modules/geocoder.js
  * Géocodage avec priorité BAN, gestion des délais et groupement par employeur.
- * Mise à jour : Suivi précis des deux étapes de géocodage par ligne.
+ * Mise à jour : Ajout de logs de débogage pour vérifier les coordonnées exactes.
  */
 export const Geocoder = {
     processedData: [],
@@ -16,7 +16,7 @@ export const Geocoder = {
     },
 
     async startGeocoding(data) {
-        console.log("[Geocoder] Lancement du traitement...");
+        console.log("[Geocoder] Lancement du traitement de", data.length, "lignes...");
         this.processedData = [];
         const container = document.getElementById('step-geo');
         this.ensureProgressUI(container);
@@ -24,7 +24,7 @@ export const Geocoder = {
         const employerGroups = {};
         let currentLetter = 'a';
         const totalRows = data.length;
-        const totalSteps = totalRows * 2; // 2 géocodages par ligne
+        const totalSteps = totalRows * 2; 
 
         for (let i = 0; i < data.length; i++) {
             const pair = data[i];
@@ -32,37 +32,39 @@ export const Geocoder = {
 
             // --- ÉTAPE 1 : Géocodage Employé ---
             const addrEmployee = pair['adresse employé'];
-            this.updateUI(currentStepBase, totalSteps, `Employé ${i + 1}/${totalRows} : ${addrEmployee}`);
+            this.updateUI(currentStepBase, totalSteps, `Géocodage employé ${i + 1}/${totalRows}...`);
             
             await this.delay(1200);
             const employeeCoords = await this.fetchWithFallback(addrEmployee);
             
             if (!employeeCoords) {
-                console.warn(`[Geocoder] Échec employé : ${addrEmployee}`);
+                console.error(`[Geocoder] ❌ Échec critique pour l'employé : ${addrEmployee}`);
                 continue; 
             }
+            console.log(`[Geocoder] ✅ Employé trouvé : ${addrEmployee} -> [Lat: ${employeeCoords.lat}, Lon: ${employeeCoords.lon}]`);
 
             // --- ÉTAPE 2 : Géocodage Employeur (avec cache/groupes) ---
             let employerCoords;
             let groupId;
             const site = pair['adresse employeur'];
 
-            this.updateUI(currentStepBase + 1, totalSteps, `Employeur ${i + 1}/${totalRows} : ${site}`);
+            this.updateUI(currentStepBase + 1, totalSteps, `Géocodage employeur ${i + 1}/${totalRows}...`);
 
             if (employerGroups[site]) {
-                // Utilisation du cache pour optimiser les appels API
                 employerCoords = employerGroups[site].coords;
                 groupId = employerGroups[site].groupId;
-                // Petit délai visuel pour que l'utilisateur voit l'étape passer
+                console.log(`[Geocoder] 💡 Employeur déjà connu (Cache) : ${site}`);
                 await this.delay(300);
             } else {
                 await this.delay(1200);
                 employerCoords = await this.fetchWithFallback(site);
                 
                 if (!employerCoords) {
-                    console.warn(`[Geocoder] Échec employeur : ${site}`);
+                    console.error(`[Geocoder] ❌ Échec critique pour l'employeur : ${site}`);
                     continue;
                 }
+
+                console.log(`[Geocoder] ✅ Employeur trouvé : ${site} -> [Lat: ${employerCoords.lat}, Lon: ${employerCoords.lon}]`);
 
                 groupId = currentLetter;
                 employerGroups[site] = { coords: employerCoords, groupId: currentLetter, count: 0 };
@@ -90,11 +92,11 @@ export const Geocoder = {
     },
 
     async fetchWithFallback(address) {
-        // Tente BAN d'abord
+        // Tente BAN d'abord (Excellent pour les adresses françaises)
         let res = await this.callBAN(address);
         if (res) { this.apiStats.ban.s++; return res; }
         
-        // Fallback Nominatim
+        // Fallback Nominatim (Meilleur pour les noms de lieux/enseignes comme "Monoprix")
         await this.delay(500);
         res = await this.callNominatim(address);
         if (res) { this.apiStats.nom.s++; return res; }
@@ -109,7 +111,7 @@ export const Geocoder = {
             const d = await r.json();
             if (d.features?.length > 0) {
                 const c = d.features[0].geometry.coordinates;
-                return { lat: c[1], lon: c[0] };
+                return { lat: c[1], lon: c[0] }; // BAN renvoie [Lon, Lat]
             }
         } catch(e) { return null; }
     },
