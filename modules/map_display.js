@@ -1,26 +1,30 @@
 /**
  * modules/map_display.js
  * Rendu Deck.gl (Points Verts/Rouges + Heatmap + Isochrones)
- * Export Sheets : 3 colonnes uniquement (Site, Ville, CSV)
- * Inclus : Autocomplétion ville (Nominatim) & Masquage terminal logs
+ * Export Sheets : Colonnes filtrées (id, distance_km, duree_min, status)
+ * Inclus : Autocomplétion Nominatim validée, contrôles Heatmap & capture d'image
  */
 
 export const MapDisplay = {
     deckgl: null,
     lastState: null,
+    isCityValidated: false,
+    heatmapSettings: {
+        radius: 35,
+        threshold: 0.05
+    },
 
     render(state) {
         this.lastState = state;
         if (!state.routes || state.routes.length === 0) return;
 
-        // Masquage du terminal de logs pour ne laisser que la carte
+        // Masquage du terminal de logs
         const logs = document.getElementById('cloud-logs');
         if (logs) logs.style.display = 'none';
 
-        // Initialisation de l'autocomplétion de la ville
         this.initCityAutocomplete();
+        this.initHeatmapControls();
 
-        // Liaison du bouton de sauvegarde
         const saveBtn = document.getElementById('btn-cloud-save');
         if (saveBtn && !saveBtn.dataset.init) {
             saveBtn.addEventListener('click', () => this.saveToSheets(this.lastState));
@@ -30,22 +34,17 @@ export const MapDisplay = {
         const allTrajectoryPoints = [];
         const pointFeatures = [];
 
-        // 1. Préparation des trajectoires (Heatmap) et des points (Départ/Arrivée)
         state.routes.forEach(route => {
             if (route.status === 'success' && route.geometry) {
                 const coords = this.decodePolyline(route.geometry);
-                
-                // Points pour la Heatmap (tous les points du tracé)
                 coords.forEach(p => allTrajectoryPoints.push({ coords: p }));
 
-                // Point de départ (Employé) -> Vert
                 pointFeatures.push({
                     type: "Feature",
                     properties: { type: 'depart', id: route.id },
                     geometry: { type: "Point", coordinates: [route.start_lon, route.start_lat] }
                 });
 
-                // Point d'arrivée (Entreprise) -> Rouge
                 pointFeatures.push({
                     type: "Feature",
                     properties: { type: 'arrivee', id: route.id },
@@ -54,12 +53,10 @@ export const MapDisplay = {
             }
         });
 
-        // 2. Tri des isochrones pour l'empilement (10km fond -> 2km dessus)
         const isochroneFeatures = state.isochrones 
             ? [...state.isochrones].sort((a, b) => b.properties.range_km - a.properties.range_km) 
             : [];
 
-        // 3. Définition des Layers Deck.gl
         const layers = [
             new deck.TileLayer({
                 id: 'base-tiles',
@@ -72,7 +69,6 @@ export const MapDisplay = {
                     });
                 }
             }),
-
             new deck.GeoJsonLayer({
                 id: 'isochrones-layer',
                 data: { type: "FeatureCollection", features: isochroneFeatures },
@@ -82,34 +78,32 @@ export const MapDisplay = {
                 getLineColor: [255, 255, 255, 100],
                 getLineWidth: 1
             }),
-
             new deck.HeatmapLayer({
                 id: 'heatmap-layer',
                 data: allTrajectoryPoints,
                 getPosition: d => d.coords,
-                radiusPixels: 35,
+                radiusPixels: this.heatmapSettings.radius,
                 intensity: 1,
-                threshold: 0.05,
+                threshold: this.heatmapSettings.threshold,
                 aggregation: 'SUM'
             }),
-
             new deck.GeoJsonLayer({
                 id: 'points-layer',
                 data: { type: "FeatureCollection", features: pointFeatures },
                 pickable: true,
-                getFillColor: d => d.properties.type === 'arrivee' ? [239, 68, 68] : [34, 197, 94], // Rouge vs Vert
+                getFillColor: d => d.properties.type === 'arrivee' ? [239, 68, 68] : [34, 197, 94],
                 getPointRadius: 25,
                 pointRadiusMinPixels: 4
             })
         ];
 
-        // 4. Initialisation ou Mise à jour de la carte
         if (!this.deckgl) {
             this.deckgl = new deck.DeckGL({
                 container: 'map-container',
                 initialViewState: this.calculateInitialView(allTrajectoryPoints),
                 controller: true,
                 layers: layers,
+                glOptions: { preserveDrawingBuffer: true }, // Requis pour la capture d'image
                 getTooltip: ({object}) => {
                     if (!object) return null;
                     if (object.properties.range_km) return `Isochrone: ${object.properties.range_km} km`;
@@ -123,19 +117,60 @@ export const MapDisplay = {
     },
 
     /**
-     * Gère l'autocomplétion du champ Ville via Nominatim
+     * Interface de contrôle pour la Heatmap
+     */
+    initHeatmapControls() {
+        if (document.getElementById('heatmap-controls')) return;
+
+        const container = document.getElementById('map-container');
+        const controls = document.createElement('div');
+        controls.id = 'heatmap-controls';
+        controls.className = 'absolute top-4 right-4 bg-white/90 backdrop-blur p-4 rounded-xl shadow-lg z-[50] border border-slate-200 w-48';
+        controls.innerHTML = `
+            <h4 class="text-[10px] font-bold uppercase text-slate-500 mb-3 tracking-widest">Réglages Heatmap</h4>
+            <div class="mb-3">
+                <label class="block text-[9px] mb-1 font-bold">Rayon: <span id="val-radius">${this.heatmapSettings.radius}</span></label>
+                <input type="range" id="input-radius" min="10" max="100" value="${this.heatmapSettings.radius}" class="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600">
+            </div>
+            <div>
+                <label class="block text-[9px] mb-1 font-bold">Seuil: <span id="val-threshold">${this.heatmapSettings.threshold}</span></label>
+                <input type="range" id="input-threshold" min="0.01" max="0.2" step="0.01" value="${this.heatmapSettings.threshold}" class="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600">
+            </div>
+        `;
+        container.appendChild(controls);
+
+        document.getElementById('input-radius').oninput = (e) => {
+            this.heatmapSettings.radius = parseInt(e.target.value);
+            document.getElementById('val-radius').innerText = this.heatmapSettings.radius;
+            this.render(this.lastState);
+        };
+        document.getElementById('input-threshold').oninput = (e) => {
+            this.heatmapSettings.threshold = parseFloat(e.target.value);
+            document.getElementById('val-threshold').innerText = this.heatmapSettings.threshold;
+            this.render(this.lastState);
+        };
+    },
+
+    /**
+     * Capture de la carte pour le PDF
+     */
+    getMapImage() {
+        if (!this.deckgl) return null;
+        return this.deckgl.getCanvas().toDataURL('image/png');
+    },
+
+    /**
+     * Gère l'autocomplétion de la ville
      */
     initCityAutocomplete() {
         const input = document.getElementById('input-city');
         if (!input || input.dataset.autoinit) return;
         input.dataset.autoinit = "true";
 
-        // Création du conteneur de suggestions
         const suggestionContainer = document.createElement('div');
         suggestionContainer.id = 'city-suggestions';
         suggestionContainer.className = 'absolute z-[100] bg-white border border-slate-200 rounded-lg shadow-xl mt-1 w-full max-h-48 overflow-y-auto hidden';
         
-        // Assurer que le parent est positionné pour l'alignement
         if (input.parentNode) {
             input.parentNode.style.position = 'relative';
             input.parentNode.appendChild(suggestionContainer);
@@ -143,6 +178,7 @@ export const MapDisplay = {
 
         let timeout;
         input.addEventListener('input', (e) => {
+            this.isCityValidated = false; // Invalider si l'utilisateur modifie manuellement
             clearTimeout(timeout);
             const query = e.target.value.trim();
             
@@ -160,50 +196,47 @@ export const MapDisplay = {
                     if (results.length > 0) {
                         suggestionContainer.classList.remove('hidden');
                         results.forEach(res => {
-                            const name = res.display_name;
                             const item = document.createElement('div');
                             item.className = 'p-3 hover:bg-indigo-50 cursor-pointer text-xs border-b border-slate-100 last:border-0 transition-colors';
-                            item.innerText = name;
+                            item.innerText = res.display_name;
                             
                             item.onclick = () => {
-                                // Extraction du nom de la ville pour formater proprement
                                 const city = res.address.city || res.address.town || res.address.village || res.display_name.split(',')[0];
                                 input.value = city;
+                                this.isCityValidated = true;
                                 suggestionContainer.classList.add('hidden');
+                                input.classList.remove('border-red-500');
+                                input.classList.add('border-emerald-500');
                             };
                             suggestionContainer.appendChild(item);
                         });
-                    } else {
-                        suggestionContainer.classList.add('hidden');
                     }
-                } catch (err) {
-                    console.error("Erreur autocomplétion:", err);
-                }
+                } catch (err) { console.error(err); }
             }, 400);
         });
 
-        // Fermer les suggestions si on clique ailleurs
         document.addEventListener('click', (e) => {
             if (e.target !== input) suggestionContainer.classList.add('hidden');
         });
     },
 
     getIsochroneColor(km) {
-        if (km <= 2) return [46, 204, 113];   // Vert
-        if (km <= 5) return [241, 196, 15];   // Jaune
-        return [230, 126, 34];                // Orange (10km)
+        if (km <= 2) return [46, 204, 113];
+        if (km <= 5) return [241, 196, 15];
+        return [230, 126, 34];
     },
 
     /**
-     * Export vers Google Sheets (Version Simplifiée : 3 Colonnes)
+     * Export vers Google Sheets avec filtrage des colonnes
      */
     async saveToSheets(state) {
         const siteName = document.getElementById('input-site-name')?.value.trim();
         const cityName = document.getElementById('input-city')?.value.trim();
         const btn = document.getElementById('btn-cloud-save');
 
-        if (!siteName || !cityName) { 
-            alert("Veuillez renseigner le Nom du Site et la Ville avant de sauvegarder."); 
+        if (!siteName || !this.isCityValidated) { 
+            alert("Veuillez sélectionner une ville dans les suggestions pour valider le format."); 
+            document.getElementById('input-city').classList.add('border-red-500');
             return; 
         }
 
@@ -211,21 +244,18 @@ export const MapDisplay = {
         btn.innerHTML = `<span class="animate-pulse">Export...</span>`;
 
         try {
-            // Préparation des données CSV (analyse complète)
-            const analysisData = state.routes.map(r => ({
+            // Filtrage strict des colonnes pour le CSV
+            const filteredData = state.routes.map(r => ({
                 id: r.id,
-                adresse_employe: r.employee_address,
-                site_employeur: r.employer_address,
                 distance_km: r.distance_km || 0,
                 duree_min: r.duration_min || 0,
                 status: r.status
             }));
 
-            // Payload restreint à 3 champs comme demandé
             const payload = {
                 field1: siteName,
                 field2: cityName,
-                field3: Papa.unparse(analysisData) // Le fichier CSV sous forme de texte
+                field3: Papa.unparse(filteredData)
             };
 
             const url = "https://script.google.com/macros/s/AKfycbxgTYcx-62MBamAawDtt3IMgMAFCkudO49be8amsULPoeNkXiYLuh3dXK8zLd9u-hoyAA/exec";
@@ -237,9 +267,8 @@ export const MapDisplay = {
                 body: JSON.stringify(payload) 
             });
 
-            alert("Données transmises avec succès au Google Sheet !");
+            alert("Données transmises avec succès !");
         } catch (error) {
-            console.error("[MapDisplay] Erreur d'export:", error);
             alert("Erreur lors de la sauvegarde.");
         } finally {
             btn.disabled = false;
