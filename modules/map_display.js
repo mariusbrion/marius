@@ -1,6 +1,7 @@
 /**
  * modules/map_display.js
- * Ordre : 2km au-dessus. Opacité : 15%. Sauvegarde : 8 colonnes.
+ * Rendu Deck.gl (Points Verts/Rouges + Heatmap + Isochrones)
+ * Export Sheets : 3 colonnes uniquement (Site, Ville, CSV)
  */
 
 export const MapDisplay = {
@@ -11,35 +12,56 @@ export const MapDisplay = {
         this.lastState = state;
         if (!state.routes || state.routes.length === 0) return;
 
+        // Liaison du bouton de sauvegarde
         const saveBtn = document.getElementById('btn-cloud-save');
         if (saveBtn && !saveBtn.dataset.init) {
             saveBtn.addEventListener('click', () => this.saveToSheets(this.lastState));
             saveBtn.dataset.init = "true";
         }
 
-        const allTrajectoires = [];
-        const allHeatmapPoints = [];
+        const allTrajectoryPoints = [];
+        const pointFeatures = [];
 
+        // 1. Préparation des trajectoires (Heatmap) et des points (Départ/Arrivée)
         state.routes.forEach(route => {
             if (route.status === 'success' && route.geometry) {
                 const coords = this.decodePolyline(route.geometry);
-                allTrajectoires.push({ type: "Feature", geometry: { type: "LineString", coordinates: coords } });
-                coords.forEach(p => allHeatmapPoints.push({ coords: p }));
+                
+                // Points pour la Heatmap (tous les points du tracé)
+                coords.forEach(p => allTrajectoryPoints.push({ coords: p }));
+
+                // Point de départ (Employé) -> Vert
+                pointFeatures.push({
+                    type: "Feature",
+                    properties: { type: 'depart', id: route.id },
+                    geometry: { type: "Point", coordinates: [route.start_lon, route.start_lat] }
+                });
+
+                // Point d'arrivée (Entreprise) -> Rouge
+                pointFeatures.push({
+                    type: "Feature",
+                    properties: { type: 'arrivee', id: route.id },
+                    geometry: { type: "Point", coordinates: [route.end_lon, route.end_lat] }
+                });
             }
         });
 
-        // TRI POUR EMPILEMENT : On trie pour avoir le 10km en premier dans le tableau (fond) et 2km en dernier (top)
+        // 2. Tri des isochrones pour l'empilement (10km fond -> 2km dessus)
         const isochroneFeatures = state.isochrones 
             ? [...state.isochrones].sort((a, b) => b.properties.range_km - a.properties.range_km) 
             : [];
 
+        // 3. Définition des Layers Deck.gl
         const layers = [
             new deck.TileLayer({
-                id: 'base-map-tiles',
+                id: 'base-tiles',
                 data: 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
                 renderSubLayers: props => {
                     const { bbox: { west, south, east, north } } = props.tile;
-                    return new deck.BitmapLayer(props, { data: null, image: props.data, bounds: [west, south, east, north] });
+                    return new deck.BitmapLayer(props, {
+                        data: null, image: props.data,
+                        bounds: [west, south, east, north]
+                    });
                 }
             }),
 
@@ -47,7 +69,7 @@ export const MapDisplay = {
                 id: 'isochrones-layer',
                 data: { type: "FeatureCollection", features: isochroneFeatures },
                 pickable: true, stroked: true, filled: true,
-                opacity: 0.15, // Consigne : 15% opacité
+                opacity: 0.15,
                 getFillColor: d => this.getIsochroneColor(d.properties.range_km),
                 getLineColor: [255, 255, 255, 100],
                 getLineWidth: 1
@@ -55,87 +77,99 @@ export const MapDisplay = {
 
             new deck.HeatmapLayer({
                 id: 'heatmap-layer',
-                data: allHeatmapPoints,
+                data: allTrajectoryPoints,
                 getPosition: d => d.coords,
-                radiusPixels: 35, intensity: 1, threshold: 0.05
+                radiusPixels: 35,
+                intensity: 1,
+                threshold: 0.05,
+                aggregation: 'SUM'
             }),
 
             new deck.GeoJsonLayer({
-                id: 'routes-layer-internal',
-                data: { type: "FeatureCollection", features: allTrajectoires },
-                visible: false, pickable: true
+                id: 'points-layer',
+                data: { type: "FeatureCollection", features: pointFeatures },
+                pickable: true,
+                getFillColor: d => d.properties.type === 'arrivee' ? [239, 68, 68] : [34, 197, 94], // Rouge vs Vert
+                getPointRadius: 25,
+                pointRadiusMinPixels: 4
             })
         ];
 
+        // 4. Initialisation ou Mise à jour de la carte
         if (!this.deckgl) {
             this.deckgl = new deck.DeckGL({
                 container: 'map-container',
-                initialViewState: this.calculateInitialView(allHeatmapPoints),
+                initialViewState: this.calculateInitialView(allTrajectoryPoints),
                 controller: true,
                 layers: layers,
-                getTooltip: ({object}) => object && object.properties.range_km && `Isochrone: ${object.properties.range_km} km`
+                getTooltip: ({object}) => {
+                    if (!object) return null;
+                    if (object.properties.range_km) return `Isochrone: ${object.properties.range_km} km`;
+                    if (object.properties.type) return object.properties.type === 'arrivee' ? "Site Employeur" : "Départ Employé";
+                    return null;
+                }
             });
         } else {
-            this.deckgl.setProps({ layers, initialViewState: this.calculateInitialView(allHeatmapPoints) });
+            this.deckgl.setProps({ layers, initialViewState: this.calculateInitialView(allTrajectoryPoints) });
         }
     },
 
     getIsochroneColor(km) {
         if (km <= 2) return [46, 204, 113];   // Vert
-        if (km <= 5) return [241, 196, 15];  // Jaune
-        return [230, 126, 34];               // Orange (10km)
+        if (km <= 5) return [241, 196, 15];   // Jaune
+        return [230, 126, 34];                // Orange (10km)
     },
 
+    /**
+     * Export vers Google Sheets (Version Simplifiée : 3 Colonnes)
+     */
     async saveToSheets(state) {
         const siteName = document.getElementById('input-site-name')?.value.trim();
         const cityName = document.getElementById('input-city')?.value.trim();
         const btn = document.getElementById('btn-cloud-save');
-        if (!siteName || !cityName) { alert("Remplissez les champs Site et Ville."); return; }
+
+        if (!siteName || !cityName) { 
+            alert("Veuillez renseigner le Nom du Site et la Ville avant de sauvegarder."); 
+            return; 
+        }
 
         btn.disabled = true;
-        btn.innerHTML = `<span class="loader mr-2"></span>Export...`;
+        btn.innerHTML = `<span class="animate-pulse">Export...</span>`;
 
         try {
+            // Préparation des données CSV (analyse complète)
             const analysisData = state.routes.map(r => ({
-                id: r.id, start_lat: r.start_lat, start_lon: r.start_lon, end_lat: r.end_lat, end_lon: r.end_lon,
-                distance_km: r.distance_km || '', duration_minutes: r.duration_min || '', status: r.status, error: r.error || ''
+                id: r.id,
+                adresse_employe: r.employee_address,
+                site_employeur: r.employer_address,
+                distance_km: r.distance_km || 0,
+                duree_min: r.duration_min || 0,
+                status: r.status
             }));
 
-            const ptsGeo = { type: "FeatureCollection", features: state.coordinates.flatMap(c => [
-                { type: "Feature", properties: { id: c.id, type: "dep" }, geometry: { type: "Point", coordinates: [c.start_lon, c.start_lat] } },
-                { type: "Feature", properties: { id: c.id, type: "arr" }, geometry: { type: "Point", coordinates: [c.end_lon, c.end_lat] } }
-            ])};
-
-            const lnsGeo = { type: "FeatureCollection", features: state.routes.filter(r => r.status === 'success').map(r => ({
-                type: "Feature", properties: { id: r.id }, geometry: { type: "LineString", coordinates: this.decodePolyline(r.geometry) }
-            }))};
-
-            // FILTRAGE DES ISOCHRONES PAR DISTANCE POUR LES COLONNES 6, 7, 8
-            const getIsoByKm = (km) => ({
-                type: "FeatureCollection",
-                features: (state.isochrones || []).filter(f => f.properties.range_km === km)
-            });
-
+            // Payload restreint à 3 champs comme demandé
             const payload = {
                 field1: siteName,
                 field2: cityName,
-                field3: JSON.stringify(ptsGeo),
-                field4: JSON.stringify(lnsGeo),
-                field5: Papa.unparse(analysisData),
-                field6: JSON.stringify(getIsoByKm(2)),  // Isochrone 2km
-                field7: JSON.stringify(getIsoByKm(5)),  // Isochrone 5km
-                field8: JSON.stringify(getIsoByKm(10))  // Isochrone 10km
+                field3: Papa.unparse(analysisData) // Le fichier CSV sous forme de texte
             };
 
             const url = "https://script.google.com/macros/s/AKfycbxgTYcx-62MBamAawDtt3IMgMAFCkudO49be8amsULPoeNkXiYLuh3dXK8zLd9u-hoyAA/exec";
-            await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
+            
+            await fetch(url, { 
+                method: 'POST', 
+                mode: 'no-cors', 
+                headers: { 'Content-Type': 'text/plain' }, 
+                body: JSON.stringify(payload) 
+            });
 
-            alert("Données sauvegardées (8 colonnes) !");
+            alert("Données transmises avec succès au Google Sheet !");
         } catch (error) {
-            console.error(error);
+            console.error("[MapDisplay] Erreur d'export:", error);
+            alert("Erreur lors de la sauvegarde.");
         } finally {
             btn.disabled = false;
-            btn.innerHTML = `<span>Sauvegarder les données</span>`;
+            btn.innerHTML = `<span>Sauvegarder</span>`;
         }
     },
 
@@ -155,9 +189,16 @@ export const MapDisplay = {
     },
 
     calculateInitialView(points) {
-        if (points.length === 0) return { longitude: -0.57, latitude: 44.83, zoom: 12 };
+        if (points.length === 0) return { longitude: -0.57, latitude: 44.83, zoom: 11, pitch: 0, bearing: 0 };
         const avgLon = points.reduce((s, p) => s + p.coords[0], 0) / points.length;
         const avgLat = points.reduce((s, p) => s + p.coords[1], 0) / points.length;
-        return { longitude: avgLon, latitude: avgLat, zoom: 11, pitch: 0, bearing: 0 };
+        return { 
+            longitude: avgLon, 
+            latitude: avgLat, 
+            zoom: 11, 
+            pitch: 0, 
+            bearing: 0,
+            transitionDuration: 1000
+        };
     }
 };
