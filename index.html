@@ -18,13 +18,19 @@
     <!-- PapaParse -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 
+    <!-- Chart.js (REQUIS POUR ANALYTICS) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- jsPDF (REQUIS POUR L'AUDIT PDF) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
     <style>
         .step-view { display: none; }
         .step-view.active { display: block; }
         .progress-bar { transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
         #map-container {
             width: 100%;
-            height: 500px; /* Hauteur fixe pour laisser de la place aux logs */
+            height: 500px;
             position: relative;
             background: #e2e8f0;
         }
@@ -37,6 +43,13 @@
             overflow-y: auto;
             padding: 10px;
             border-top: 2px solid #0f172a;
+        }
+        /* Style pour cacher les canvas techniques de génération PDF */
+        .hidden-pdf-canvas {
+            position: absolute;
+            top: -9999px;
+            left: -9999px;
+            visibility: hidden;
         }
     </style>
 </head>
@@ -98,11 +111,11 @@
             </div>
         </section>
 
-        <!-- STEP 4: MAP DISPLAY -->
+        <!-- STEP 4: MAP DISPLAY & ANALYTICS -->
         <section id="step-map" class="step-view">
             <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
                 
-                <!-- PANNEAU DE CONFIGURATION SAUVEGARDE -->
+                <!-- PANNEAU DE CONFIGURATION SAUVEGARDE ET EXPORT -->
                 <div class="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-4 items-end">
                     <div class="flex-grow min-w-[200px]">
                         <label class="block text-[10px] uppercase font-bold text-slate-500 mb-1">Nom du Site</label>
@@ -112,10 +125,29 @@
                         <label class="block text-[10px] uppercase font-bold text-slate-500 mb-1">Ville</label>
                         <input type="text" id="input-city" placeholder="Ex: Bordeaux" class="w-full p-2 text-sm rounded border border-slate-300 outline-none focus:ring-2 focus:ring-indigo-500">
                     </div>
+                    
+                    <!-- BOUTON SAUVEGARDE CLOUD -->
                     <button id="btn-cloud-save" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded font-bold text-sm transition-all flex items-center space-x-2">
                         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
-                        <span>Sauvegarder les données</span>
+                        <span>Sauvegarder</span>
                     </button>
+
+                    <!-- BOUTON AUDIT PDF (NOUVEAU) -->
+                    <button id="pdfBtn" class="bg-rose-500 hover:bg-rose-600 text-white px-6 py-2 rounded font-bold text-sm transition-all flex items-center space-x-2 shadow-sm">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                        <span>Audit PDF</span>
+                    </button>
+                </div>
+
+                <!-- DASHBOARD ANALYTIQUE (NOUVEAU) -->
+                <div id="analytics-dashboard" class="hidden p-6 bg-white border-b border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+                    <div class="h-64">
+                        <h3 class="text-xs font-bold uppercase tracking-widest text-slate-400 mb-4">Répartition des Distances (%)</h3>
+                        <canvas id="interactiveChart"></canvas>
+                    </div>
+                    <div id="analytics-summary" class="bg-slate-50 p-6 rounded-2xl border border-slate-100">
+                        <!-- Le commentaire automatique s'insèrera ici -->
+                    </div>
                 </div>
 
                 <!-- ZONE CARTE -->
@@ -137,6 +169,11 @@
         </section>
 
     </main>
+
+    <!-- CANVAS CACHÉS POUR LA GÉNÉRATION DES GRAPHIQUES DU PDF (INDISPENSABLE) -->
+    <canvas id="pdfChartDistances" class="hidden-pdf-canvas" width="800" height="400"></canvas>
+    <canvas id="pdfChartTimesMuscular" class="hidden-pdf-canvas" width="800" height="400"></canvas>
+    <canvas id="pdfChartTimesVAE" class="hidden-pdf-canvas" width="800" height="400"></canvas>
 
     <script type="module" src="main.js"></script>
 </body>
