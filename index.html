@@ -48,16 +48,40 @@
             padding: 10px;
         }
 
-        .hidden-pdf-canvas {
+        /* Classes pour les cartes de stats sous l'histogramme */
+        .stat-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            padding: 1rem;
+            border-radius: 0.75rem;
+            text-align: center;
+            transition: all 0.2s;
+        }
+        .stat-value {
+            font-size: 1.25rem;
+            font-weight: 800;
+            color: #4f46e5;
+        }
+        .stat-label {
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #64748b;
+            margin-top: 0.25rem;
+            line-height: 1.2;
+        }
+
+        #pdf-hidden-generator {
             position: absolute;
             top: -9999px;
             left: -9999px;
             visibility: hidden;
         }
 
-        /* Amélioration de la lisibilité des axes Chart.js */
-        canvas {
-            max-width: 100%;
+        .btn-toggle.active {
+            background-color: #4f46e5;
+            color: white;
+            border-color: #4f46e5;
         }
     </style>
 </head>
@@ -134,43 +158,41 @@
                         </div>
                     </div>
                     <div class="flex gap-2">
-                        <button id="btn-cloud-save" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg font-bold text-sm transition-all flex items-center space-x-2">
-                            <span>Sauvegarder</span>
+                        <button id="btn-cloud-save" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg font-bold text-sm transition-all">
+                            Sauvegarder
                         </button>
                         <button id="pdfBtn" class="bg-rose-500 hover:bg-rose-600 text-white px-5 py-2.5 rounded-lg font-bold text-sm transition-all flex items-center space-x-2 shadow-sm">
                             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                            <span>Audit PDF</span>
+                            <span>Export Audit PDF</span>
                         </button>
                     </div>
                 </div>
 
-                <!-- ANALYTICS PANEL -->
-                <div id="analytics-dashboard" class="hidden bg-white p-6 border-b border-slate-200">
-                    <div class="flex flex-col lg:flex-row gap-8">
-                        <!-- Contrôles et Graphique -->
-                        <div class="lg:w-1/2 flex flex-col">
-                            <div class="flex items-center justify-between mb-6">
-                                <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wider">Visualisation des données</h3>
-                                <div class="inline-flex rounded-md shadow-sm" role="group">
-                                    <button type="button" id="toggle-dist" class="px-4 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-l-lg hover:bg-slate-100 hover:text-indigo-600 focus:z-10 focus:ring-2 focus:ring-indigo-500 transition-colors active:bg-indigo-50">
-                                        Distances
-                                    </button>
-                                    <button type="button" id="toggle-time" class="px-4 py-2 text-xs font-medium text-slate-700 bg-white border-t border-b border-r border-slate-200 rounded-r-lg hover:bg-slate-100 hover:text-indigo-600 focus:z-10 focus:ring-2 focus:ring-indigo-500 transition-colors">
-                                        Temps VAE
-                                    </button>
-                                </div>
+                <!-- ANALYTICS DASHBOARD -->
+                <div id="analytics-dashboard" class="hidden bg-white p-8 border-b border-slate-200">
+                    <div class="max-w-4xl mx-auto">
+                        <!-- Contrôles du Dashboard -->
+                        <div class="flex flex-wrap items-center justify-between gap-4 mb-8">
+                            <div class="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
+                                <button id="toggle-dist" class="btn-toggle active px-6 py-2 text-xs font-bold rounded-lg transition-all uppercase tracking-wider">Distances</button>
+                                <button id="toggle-time" class="btn-toggle px-6 py-2 text-xs font-bold rounded-lg transition-all uppercase tracking-wider">Temps</button>
                             </div>
-                            <div class="bg-slate-50 rounded-xl p-4 border border-slate-100 h-64 relative">
+                            <button id="bike-toggle" class="btn-toggle hidden px-4 py-2 bg-white border border-slate-200 text-xs font-bold rounded-lg hover:bg-slate-50 transition-all uppercase tracking-wider">
+                                🚲 Vélo électrique (-25%)
+                            </button>
+                        </div>
+
+                        <!-- Graphique Central -->
+                        <div class="mb-10">
+                            <h3 id="chart-title" class="text-center text-sm font-black text-slate-400 uppercase tracking-[0.2em] mb-6">Distribution par Distance</h3>
+                            <div class="h-72 w-full relative">
                                 <canvas id="interactiveChart"></canvas>
                             </div>
                         </div>
 
-                        <!-- Commentaire Automatique -->
-                        <div class="lg:w-1/2">
-                            <div id="analytics-summary" class="h-full flex flex-col justify-center p-6 bg-indigo-50 rounded-2xl border border-indigo-100 border-dashed">
-                                <!-- Injecté par analytics.js -->
-                                <p class="text-slate-400 italic text-center text-sm">Chargement des analyses...</p>
-                            </div>
+                        <!-- Grille de Statistiques (Remplacement du commentaire) -->
+                        <div id="statsGrid" class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+                            <!-- Injecté dynamiquement par JS -->
                         </div>
                     </div>
                 </div>
@@ -180,40 +202,38 @@
                     <div id="map-container"></div>
                     
                     <!-- LÉGENDE CARTE OVERLAY -->
-                    <div class="absolute bottom-6 left-6 bg-white/90 backdrop-blur shadow-lg rounded-lg p-3 border border-slate-200 text-[10px] font-bold uppercase tracking-tight text-slate-600 pointer-events-none">
-                        <div class="flex items-center gap-2 mb-1">
-                            <span class="w-3 h-3 rounded-full bg-[#2ecc71] opacity-50"></span> <span>Zone 2km</span>
+                    <div class="absolute bottom-6 left-6 bg-white/90 backdrop-blur shadow-lg rounded-xl p-4 border border-slate-200 text-[10px] font-bold uppercase tracking-tight text-slate-600 pointer-events-none">
+                        <div class="flex items-center gap-3 mb-2">
+                            <span class="w-3 h-3 rounded-full bg-[#2ecc71] opacity-70"></span> <span>Zone 2km</span>
                         </div>
-                        <div class="flex items-center gap-2 mb-1">
-                            <span class="w-3 h-3 rounded-full bg-[#f1c40f] opacity-50"></span> <span>Zone 5km</span>
+                        <div class="flex items-center gap-3 mb-2">
+                            <span class="w-3 h-3 rounded-full bg-[#f1c40f] opacity-70"></span> <span>Zone 5km</span>
                         </div>
-                        <div class="flex items-center gap-2">
-                            <span class="w-3 h-3 rounded-full bg-[#e67e22] opacity-50"></span> <span>Zone 10km</span>
+                        <div class="flex items-center gap-3">
+                            <span class="w-3 h-3 rounded-full bg-[#e67e22] opacity-70"></span> <span>Zone 10km</span>
                         </div>
                     </div>
                 </div>
 
                 <!-- FOOTER / LOGS -->
                 <div id="cloud-logs" class="log-terminal border-t border-slate-700">
-                    > Système prêt pour l'analyse.
+                    > Système initialisé. En attente d'import.
                 </div>
                 
                 <div class="p-4 bg-white flex justify-between items-center text-[10px] font-bold uppercase tracking-tighter text-slate-400">
                     <div class="flex items-center space-x-2">
                         <span class="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                        <span>Moteur de calcul Deck.gl actif</span>
+                        <span>Moteur de calcul actif</span>
                     </div>
-                    <button onclick="location.reload()" class="text-indigo-600 hover:underline">Nouvelle analyse</button>
+                    <button onclick="location.reload()" class="text-indigo-600 hover:underline">Réinitialiser l'analyse</button>
                 </div>
             </div>
         </section>
 
     </main>
 
-    <!-- ÉLÉMENTS TECHNIQUES CACHÉS -->
-    <canvas id="pdfChartDistances" class="hidden-pdf-canvas" width="800" height="400"></canvas>
-    <canvas id="pdfChartTimesMuscular" class="hidden-pdf-canvas" width="800" height="400"></canvas>
-    <canvas id="pdfChartTimesVAE" class="hidden-pdf-canvas" width="800" height="400"></canvas>
+    <!-- ÉLÉMENTS TECHNIQUES CACHÉS POUR LE PDF -->
+    <div id="pdf-hidden-generator"></div>
 
     <!-- SCRIPT ENTRY POINT -->
     <script type="module" src="main.js"></script>
