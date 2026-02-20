@@ -2,6 +2,7 @@
  * modules/map_display.js
  * Rendu Deck.gl (Points Verts/Rouges + Heatmap + Isochrones)
  * Export Sheets : 3 colonnes uniquement (Site, Ville, CSV)
+ * Inclus : Autocomplétion ville (Nominatim) & Masquage terminal logs
  */
 
 export const MapDisplay = {
@@ -11,6 +12,13 @@ export const MapDisplay = {
     render(state) {
         this.lastState = state;
         if (!state.routes || state.routes.length === 0) return;
+
+        // Masquage du terminal de logs pour ne laisser que la carte
+        const logs = document.getElementById('cloud-logs');
+        if (logs) logs.style.display = 'none';
+
+        // Initialisation de l'autocomplétion de la ville
+        this.initCityAutocomplete();
 
         // Liaison du bouton de sauvegarde
         const saveBtn = document.getElementById('btn-cloud-save');
@@ -112,6 +120,72 @@ export const MapDisplay = {
         } else {
             this.deckgl.setProps({ layers, initialViewState: this.calculateInitialView(allTrajectoryPoints) });
         }
+    },
+
+    /**
+     * Gère l'autocomplétion du champ Ville via Nominatim
+     */
+    initCityAutocomplete() {
+        const input = document.getElementById('input-city');
+        if (!input || input.dataset.autoinit) return;
+        input.dataset.autoinit = "true";
+
+        // Création du conteneur de suggestions
+        const suggestionContainer = document.createElement('div');
+        suggestionContainer.id = 'city-suggestions';
+        suggestionContainer.className = 'absolute z-[100] bg-white border border-slate-200 rounded-lg shadow-xl mt-1 w-full max-h-48 overflow-y-auto hidden';
+        
+        // Assurer que le parent est positionné pour l'alignement
+        if (input.parentNode) {
+            input.parentNode.style.position = 'relative';
+            input.parentNode.appendChild(suggestionContainer);
+        }
+
+        let timeout;
+        input.addEventListener('input', (e) => {
+            clearTimeout(timeout);
+            const query = e.target.value.trim();
+            
+            if (query.length < 3) {
+                suggestionContainer.classList.add('hidden');
+                return;
+            }
+
+            timeout = setTimeout(async () => {
+                try {
+                    const resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(query)}&limit=5&countrycodes=fr`);
+                    const results = await resp.json();
+                    
+                    suggestionContainer.innerHTML = '';
+                    if (results.length > 0) {
+                        suggestionContainer.classList.remove('hidden');
+                        results.forEach(res => {
+                            const name = res.display_name;
+                            const item = document.createElement('div');
+                            item.className = 'p-3 hover:bg-indigo-50 cursor-pointer text-xs border-b border-slate-100 last:border-0 transition-colors';
+                            item.innerText = name;
+                            
+                            item.onclick = () => {
+                                // Extraction du nom de la ville pour formater proprement
+                                const city = res.address.city || res.address.town || res.address.village || res.display_name.split(',')[0];
+                                input.value = city;
+                                suggestionContainer.classList.add('hidden');
+                            };
+                            suggestionContainer.appendChild(item);
+                        });
+                    } else {
+                        suggestionContainer.classList.add('hidden');
+                    }
+                } catch (err) {
+                    console.error("Erreur autocomplétion:", err);
+                }
+            }, 400);
+        });
+
+        // Fermer les suggestions si on clique ailleurs
+        document.addEventListener('click', (e) => {
+            if (e.target !== input) suggestionContainer.classList.add('hidden');
+        });
     },
 
     getIsochroneColor(km) {
