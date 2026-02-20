@@ -156,7 +156,7 @@ export const Analytics = {
     },
 
     /**
-     * Commentaires rédactionnels nuancés pour le PDF
+     * Commentaires rédactionnels nuancés (Rétablis)
      */
     generateDistanceComment(stats) {
         const shortDist = stats.percentages['0-2 km'] + stats.percentages['2-5 km'];
@@ -166,18 +166,21 @@ export const Analytics = {
         let text = `Analyse de la répartition géographique : ${shortDist.toFixed(1)}% des effectifs résident à moins de 5km du site. `;
 
         if (shortDist > 30) {
-            text += "Ceci représente un gisement très important pour le report modal vers le vélo. ";
+            text += "Ceci représente un gisement très important pour le report modal vers le vélo musculaire ou électrique. ";
             text += `Concrètement, cela concerne environ ${Math.round((shortDist/100)*stats.total)} collaborateurs qui pourraient abandonner la voiture individuelle. `;
         } else if (shortDist > 15) {
-            text += "Un potentiel modéré mais existant pour la mobilité douce. ";
+            text += "Un potentiel modéré mais existant pour la mobilité douce de proximité. ";
         } else {
-            text += "L'éloignement géographique est marqué sur la courte distance. ";
+            text += "L'éloignement géographique est marqué sur la très courte distance. ";
         }
 
         if (mediumDist > 10 || under10 > 40) {
-            text += `Notez que ${under10.toFixed(1)}% des effectifs se situent à moins de 10km. `;
-            text += "Sur ces distances, le vélo électrique est souvent plus compétitif que la voiture en temps de trajet réel.";
+            text += `Si l'on élargit le périmètre, notons que ${under10.toFixed(1)}% des effectifs se situent à moins de 10km. `;
+            text += "En milieu urbain, ce sont des distances (5-10km) où le vélo est souvent plus compétitif que la voiture en temps de trajet réel, tout en restant réalisable par la très grande majorité de la population, particulièrement avec l'assistance électrique. ";
+        } else {
+            text += "Au-delà de 10km, le covoiturage ou les transports en commun deviennent des options stratégiques plus pertinentes. ";
         }
+
         return text;
     },
 
@@ -188,12 +191,25 @@ export const Analytics = {
         const under20Bike = under15Bike + bikeStats.percentages['15-20 min'];
         const countUnder20Bike = Math.round((under20Bike / 100) * totalEmployees);
         
-        let text = `Impact temporel : Actuellement, ${under15Car.toFixed(1)}% des trajets font moins de 15 min. `;
+        let text = `Impact du temps de trajet : Actuellement, ${under15Car.toFixed(1)}% des trajets sont inférieurs à 15 minutes. `;
         
         if (under15Bike > under15Car) {
             const gain = (under15Bike - under15Car).toFixed(1);
-            text += `Le vélo électrique augmenterait cette part de +${gain} points. `;
-            text += `Concrètement, ${countUnder20Bike} employés arriveraient en moins de 20 min. `;
+            text += `L'introduction du vélo électrique permettrait d'augmenter cette proportion de +${gain} points. `;
+            
+            if (under15Bike < 15) {
+                text += `Bien que la part des trajets de moins de 15 minutes reste modeste, l'assistance électrique permettrait à ${countUnder20Bike} employés de se rendre au travail en moins de 20 minutes. Ce temps de trajet reste extrêmement crédible et attractif pour la grande majorité de la population. `;
+            } else {
+                text += `Concrètement, l'assistance électrique permettrait à ${countUnder20Bike} employés de se rendre au travail en moins de 20 minutes. `;
+            }
+
+            text += "Le gain de fluidité et la réduction de la fatigue liée aux embouteillages sont des facteurs clés de qualité de vie au travail (QVT). Le vélo électrique nivelle les temps de parcours en s'affranchissant des aléas du trafic automobile.";
+        } else {
+            text += `Le passage au vélo électrique maintient des temps de parcours compétitifs en permettant à ${countUnder20Bike} employés de se rendre au travail en moins de 20 minutes tout en garantissant une prédictibilité des horaires d'arrivée et une régularité précieuse pour les collaborateurs. `;
+            
+            if (under15Bike < 10 && under20Bike > 30) {
+                text += "Même si les trajets de moins de 15 minutes sont peu nombreux, la durée de moins de 20 minutes constitue un seuil de basculement très réaliste pour la grande majorité de la population active.";
+            }
         }
         return text;
     },
@@ -226,6 +242,8 @@ export const Analytics = {
      * Export PDF Final sur 3 pages avec capture de carte
      */
     async exportFullAuditPDF() {
+        if (!this.appState.routes || this.appState.routes.length === 0) return;
+        
         const btn = document.getElementById('pdfBtn');
         btn.textContent = "Génération...";
         btn.disabled = true;
@@ -238,48 +256,121 @@ export const Analytics = {
             const margin = 20;
             const softBlue = [79, 172, 254];
 
+            // Récupération des infos personnalisées
+            const siteName = document.getElementById('input-site-name')?.value || "Site Principal";
+            const cityName = document.getElementById('input-city')?.value || "";
+            const fullTitle = "Rapport de diagnostic : " + siteName + (cityName ? " - " + cityName : "");
+
             const addFooter = () => {
-                doc.setFontSize(8); doc.setTextColor(150);
-                const footer = "Outil développé dans le cadre du CAVENA, validé par la FUB pour le label Employeur Pro Vélo.";
-                doc.text(doc.splitTextToSize(footer, pageWidth - 40), pageWidth / 2, 285, { align: 'center' });
+                const footerText = "Outil développé dans le cadre du CAVENA, faisant partie des moyens de diagnostic validés par la FUB pour la certification du label Employeur Pro Vélo.";
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(8);
+                doc.setTextColor(150, 150, 150);
+                const splitFooter = doc.splitTextToSize(footerText, pageWidth - (margin * 2));
+                doc.text(splitFooter, pageWidth / 2, pageHeight - 12, { align: 'center' });
             };
 
-            // PAGE 1: DISTANCES
-            doc.setTextColor(...softBlue); doc.setFontSize(22); doc.setFont("helvetica", "bold");
-            doc.text("Rapport de Diagnostic Mobilité", pageWidth / 2, 25, { align: 'center' });
+            // --- PAGE 1: COUVERTURE & DISTANCES ---
+            doc.setFillColor(255, 255, 255); 
+            doc.rect(0, 0, pageWidth, 40, 'F');
             
+            doc.setTextColor(...softBlue); 
+            doc.setFontSize(22);
+            doc.setFont("helvetica", "bold");
+            doc.text(fullTitle, pageWidth / 2, 25, { align: 'center' });
+            
+            doc.setTextColor(80, 80, 80);
+            doc.setFontSize(11);
+            doc.setFont("helvetica", "normal");
+            doc.text(`Rapport généré le ${new Date().toLocaleDateString()} - Outil CartoProcessor`, margin, 50);
+            doc.text(`Effectif analysé : ${this.appState.routes.length} collaborateurs`, margin, 57);
+            
+            doc.setDrawColor(...softBlue);
+            doc.line(margin, 65, pageWidth - margin, 65);
+
+            // ANALYSE DISTANCE
             const distStats = this.categorizeData('distance', false);
             const distImg = await this.generateInvisibleChart('Distances', distStats, '#4facfe');
-            doc.setFontSize(14); doc.text("1. Analyse des Distances", margin, 60);
-            doc.addImage(distImg, 'PNG', margin, 65, pageWidth - 40, 70);
-            doc.setFontSize(10); doc.setTextColor(100);
-            doc.text(doc.splitTextToSize(this.generateDistanceComment(distStats), pageWidth - 40), margin, 145);
+            
+            doc.setFontSize(14);
+            doc.setTextColor(...softBlue);
+            doc.setFont("helvetica", "bold");
+            doc.text("1. ANALYSE DES DISTANCES", margin, 80);
+            
+            doc.addImage(distImg, 'PNG', margin, 85, pageWidth - (margin*2), 70);
+            
+            const distComment = this.generateDistanceComment(distStats);
+            doc.setFont("helvetica", "italic");
+            doc.setFontSize(10);
+            doc.setTextColor(100, 100, 100);
+            const splitDist = doc.splitTextToSize(distComment, pageWidth - (margin*2));
+            doc.text(splitDist, margin, 165);
+            
             addFooter();
 
-            // PAGE 2: TEMPS & VAE
+            // --- PAGE 2: ANALYSE TEMPS ---
             doc.addPage();
-            doc.setTextColor(...softBlue); doc.setFontSize(14);
-            doc.text("2. Analyse des Temps (Simulation VAE)", margin, 20);
+            doc.setFontSize(14);
+            doc.setTextColor(...softBlue);
+            doc.setFont("helvetica", "bold");
+            doc.text("2. ANALYSE DES TEMPS DE TRAJET", margin, 20);
+            
+            const timeStats = this.categorizeData('time', false);
+            const timeImg = await this.generateInvisibleChart('Temps Musculaire', timeStats, '#4facfe');
+            
+            doc.setFontSize(10);
+            doc.setTextColor(80, 80, 80);
+            doc.text("Situation actuelle (Vélo Musculaire / Standard)", margin, 30);
+            doc.addImage(timeImg, 'PNG', margin, 32, pageWidth - (margin*2), 65);
+            
             const timeBikeStats = this.categorizeData('time', true);
-            const bikeImg = await this.generateInvisibleChart('VAE', timeBikeStats, '#2ed573');
-            doc.addImage(bikeImg, 'PNG', margin, 30, pageWidth - 40, 70);
-            doc.setFontSize(10); doc.setTextColor(100);
-            doc.text(doc.splitTextToSize(this.generateTimeComment(this.categorizeData('time', false), timeBikeStats), pageWidth - 40), margin, 110);
+            const timeComment = this.generateTimeComment(timeStats, timeBikeStats);
+            doc.setFont("helvetica", "italic");
+            doc.setTextColor(100, 100, 100);
+            const splitTime = doc.splitTextToSize(timeComment, pageWidth - (margin*2));
+            doc.text(splitTime, margin, 105);
+
+            const timeBikeImg = await this.generateInvisibleChart('Temps Électrique', timeBikeStats, '#2ed573');
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(46, 213, 115); 
+            doc.text("Projection comparative avec Assistance Électrique (VAE)", margin, 145);
+            doc.addImage(timeBikeImg, 'PNG', margin, 147, pageWidth - (margin*2), 65);
+            
             addFooter();
 
-            // PAGE 3: CARTE DE CHALEUR
+            // --- PAGE 3: CARTE ---
             doc.addPage();
-            doc.setTextColor(...softBlue); doc.setFontSize(14);
-            doc.text("3. Cartographie des Flux", margin, 20);
+            doc.setFontSize(14);
+            doc.setTextColor(...softBlue);
+            doc.setFont("helvetica", "bold");
+            doc.text("3. CARTE DE CHALEUR DES FLUX", margin, 30);
+            
             const mapImg = MapDisplay.getMapImage();
             if (mapImg) {
-                doc.addImage(mapImg, 'PNG', margin, 30, pageWidth - 40, 100);
+                doc.addImage(mapImg, 'PNG', margin, 40, pageWidth - (margin * 2), 100);
+                
+                // Description de la carte
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(10);
+                doc.setTextColor(80, 80, 80);
+                const mapDesc = "Les points verts représentent les domiciles des collaborateurs, tandis que les points rouges indiquent le lieu d'arrivée (site employeur). L'intensité de la carte de chaleur illustre les flux de passage les plus denses, permettant d'identifier les cheminements théoriques potentiels les plus stratégiques pour l'aménagement ou la sensibilisation cyclable.";
+                const splitDesc = doc.splitTextToSize(mapDesc, pageWidth - (margin * 2));
+                doc.text(splitDesc, margin, 150);
+            } else {
+                doc.setDrawColor(220, 220, 220);
+                doc.rect(margin, 40, pageWidth - (margin*2), 100);
+                doc.setFontSize(10);
+                doc.setTextColor(180, 180, 180);
+                doc.text("Capture de la carte interactive", pageWidth/2, 90, {align:'center'});
             }
+
             addFooter();
 
-            doc.save("Audit_Mobilite.pdf");
-        } catch (e) { console.error(e); } 
-        finally {
+            doc.save(`Audit_Mobilité_${siteName.replace(/\s+/g, '_')}.pdf`);
+
+        } catch (e) {
+            console.error("[Analytics] Erreur PDF:", e);
+        } finally {
             btn.textContent = "Export Audit PDF";
             btn.disabled = false;
         }
