@@ -1,7 +1,6 @@
 /**
  * modules/analytics.js
  * Dashboard interactif + Générateur d'Audit PDF Professionnel
- * Inclus : Simulation VAE, Commentaires nuancés et capture de carte Deck.gl
  */
 
 import { MapDisplay } from './map_display.js';
@@ -9,8 +8,8 @@ import { MapDisplay } from './map_display.js';
 export const Analytics = {
     appState: null,
     currentChart: null,
-    currentMode: 'distance',
-    bikeMode: false,
+    currentMode: 'distance', // 'distance' ou 'time'
+    bikeMode: false,         // Simulation VAE activée
 
     init(state) {
         this.appState = state;
@@ -24,6 +23,7 @@ export const Analytics = {
     },
 
     bindEvents() {
+        // Bouton d'export PDF
         const pdfBtn = document.getElementById('pdfBtn');
         if (pdfBtn && !pdfBtn.dataset.init) {
             pdfBtn.addEventListener('click', () => this.exportFullAuditPDF());
@@ -58,12 +58,17 @@ export const Analytics = {
             bikeBtn.onclick = () => {
                 this.bikeMode = !this.bikeMode;
                 bikeBtn.classList.toggle('active');
+                bikeBtn.classList.toggle('bg-emerald-500');
+                bikeBtn.classList.toggle('text-white');
                 bikeBtn.textContent = this.bikeMode ? '🚲 Vélo électrique activé (-25%)' : '🚲 Vélo électrique (-25%)';
                 this.renderDashboardUI();
             };
         }
     },
 
+    /**
+     * Segmentation des données
+     */
     categorizeData(mode, isBike = false) {
         const routes = this.appState.routes || [];
         const total = routes.length;
@@ -84,7 +89,7 @@ export const Analytics = {
             categories['15-20 min'] = 0; categories['20+ min'] = 0;
             routes.forEach(r => {
                 let d = parseFloat(r.duration_min);
-                if (isBike) d *= 0.75;
+                if (isBike) d *= 0.75; // Simulation VAE
                 if (d <= 10) categories['0-10 min']++;
                 else if (d <= 15) categories['10-15 min']++;
                 else if (d <= 20) categories['15-20 min']++;
@@ -100,6 +105,9 @@ export const Analytics = {
         return { categories, percentages, total };
     },
 
+    /**
+     * Mise à jour de l'interface graphique
+     */
     renderDashboardUI() {
         const { categories, percentages, total } = this.categorizeData(this.currentMode, this.bikeMode);
         
@@ -136,14 +144,58 @@ export const Analytics = {
         grid.innerHTML = '';
 
         Object.keys(categories).forEach((k, i) => {
+            const val = Object.values(categories)[i];
             const card = document.createElement('div');
             card.className = 'stat-card';
             card.innerHTML = `
-                <div class="stat-value">${Object.values(categories)[i]}</div>
-                <div class="stat-label">${k}<br>(${percentages[i].toFixed(1)}%)</div>
+                <div class="stat-value">${val}</div>
+                <div class="stat-label">${k}<br><span class="opacity-60">(${percentages[i].toFixed(1)}%)</span></div>
             `;
             grid.appendChild(card);
         });
+    },
+
+    /**
+     * Commentaires rédactionnels nuancés pour le PDF
+     */
+    generateDistanceComment(stats) {
+        const shortDist = stats.percentages['0-2 km'] + stats.percentages['2-5 km'];
+        const mediumDist = stats.percentages['5-10 km'];
+        const under10 = shortDist + mediumDist;
+
+        let text = `Analyse de la répartition géographique : ${shortDist.toFixed(1)}% des effectifs résident à moins de 5km du site. `;
+
+        if (shortDist > 30) {
+            text += "Ceci représente un gisement très important pour le report modal vers le vélo. ";
+            text += `Concrètement, cela concerne environ ${Math.round((shortDist/100)*stats.total)} collaborateurs qui pourraient abandonner la voiture individuelle. `;
+        } else if (shortDist > 15) {
+            text += "Un potentiel modéré mais existant pour la mobilité douce. ";
+        } else {
+            text += "L'éloignement géographique est marqué sur la courte distance. ";
+        }
+
+        if (mediumDist > 10 || under10 > 40) {
+            text += `Notez que ${under10.toFixed(1)}% des effectifs se situent à moins de 10km. `;
+            text += "Sur ces distances, le vélo électrique est souvent plus compétitif que la voiture en temps de trajet réel.";
+        }
+        return text;
+    },
+
+    generateTimeComment(normalStats, bikeStats) {
+        const totalEmployees = normalStats.total;
+        const under15Car = normalStats.percentages['0-10 min'] + normalStats.percentages['10-15 min'];
+        const under15Bike = bikeStats.percentages['0-10 min'] + bikeStats.percentages['10-15 min'];
+        const under20Bike = under15Bike + bikeStats.percentages['15-20 min'];
+        const countUnder20Bike = Math.round((under20Bike / 100) * totalEmployees);
+        
+        let text = `Impact temporel : Actuellement, ${under15Car.toFixed(1)}% des trajets font moins de 15 min. `;
+        
+        if (under15Bike > under15Car) {
+            const gain = (under15Bike - under15Car).toFixed(1);
+            text += `Le vélo électrique augmenterait cette part de +${gain} points. `;
+            text += `Concrètement, ${countUnder20Bike} employés arriveraient en moins de 20 min. `;
+        }
+        return text;
     },
 
     async generateInvisibleChart(label, stats, color = '#4facfe') {
@@ -170,60 +222,10 @@ export const Analytics = {
         });
     },
 
-    // LOGIQUE RÉDACTIONNELLE NUANCÉE
-    generateDistanceComment(stats) {
-        const shortDist = stats.percentages['0-2 km'] + stats.percentages['2-5 km'];
-        const mediumDist = stats.percentages['5-10 km'];
-        const under10 = shortDist + mediumDist;
-
-        let text = `Analyse de la répartition géographique : ${shortDist.toFixed(1)}% des effectifs résident à moins de 5km du site. `;
-
-        if (shortDist > 30) {
-            text += "Ceci représente un gisement très important pour le report modal vers le vélo musculaire ou électrique. ";
-            text += `Concrètement, cela concerne environ ${Math.round((shortDist/100)*stats.total)} collaborateurs qui pourraient abandonner la voiture individuelle. `;
-        } else if (shortDist > 15) {
-            text += "Un potentiel modéré mais existant pour la mobilité douce de proximité. ";
-        } else {
-            text += "L'éloignement géographique est marqué sur la très courte distance. ";
-        }
-
-        if (mediumDist > 10 || under10 > 40) {
-            text += `Si l'on élargit le périmètre, notons que ${under10.toFixed(1)}% des effectifs se situent à moins de 10km. `;
-            text += "En milieu urbain, ce sont des distances (5-10km) où le vélo est souvent plus compétitif que la voiture en temps de trajet réel, tout en restant réalisable par la très grande majorité de la population, particulièrement avec l'assistance électrique. ";
-        } else {
-            text += "Au-delà de 10km, le covoiturage ou les transports en commun deviennent des options stratégiques plus pertinentes. ";
-        }
-        return text;
-    },
-
-    generateTimeComment(normalStats, bikeStats) {
-        const totalEmployees = normalStats.total;
-        const under15Car = normalStats.percentages['0-10 min'] + normalStats.percentages['10-15 min'];
-        const under15Bike = bikeStats.percentages['0-10 min'] + bikeStats.percentages['10-15 min'];
-        const under20Bike = under15Bike + bikeStats.percentages['15-20 min'];
-        const countUnder20Bike = Math.round((under20Bike / 100) * totalEmployees);
-        
-        let text = `Impact du temps de trajet : Actuellement, ${under15Car.toFixed(1)}% des trajets sont inférieurs à 15 minutes. `;
-        
-        if (under15Bike > under15Car) {
-            const gain = (under15Bike - under15Car).toFixed(1);
-            text += `L'introduction du vélo électrique permettrait d'augmenter cette proportion de +${gain} points. `;
-            
-            if (under15Bike < 15) {
-                text += `Bien que la part des trajets de moins de 15 minutes reste modeste, l'assistance électrique permettrait à ${countUnder20Bike} employés de se rendre au travail en moins de 20 minutes. Ce temps de trajet reste extrêmement crédible et attractif pour la grande majorité de la population. `;
-            } else {
-                text += `Concrètement, l'assistance électrique permettrait à ${countUnder20Bike} employés de se rendre au travail en moins de 20 minutes. `;
-            }
-            text += "Le gain de fluidité et la réduction de la fatigue liée aux embouteillages sont des facteurs clés de qualité de vie au travail (QVT).";
-        } else {
-            text += `Le passage au vélo électrique maintient des temps de parcours compétitifs en permettant à ${countUnder20Bike} employés de se rendre au travail en moins de 20 minutes. `;
-        }
-        return text;
-    },
-
+    /**
+     * Export PDF Final sur 3 pages avec capture de carte
+     */
     async exportFullAuditPDF() {
-        if (!this.appState.routes || this.appState.routes.length === 0) return;
-        
         const btn = document.getElementById('pdfBtn');
         btn.textContent = "Génération...";
         btn.disabled = true;
@@ -237,93 +239,47 @@ export const Analytics = {
             const softBlue = [79, 172, 254];
 
             const addFooter = () => {
-                const footerText = "Outil développé dans le cadre du CAVENA, faisant partie des moyens de diagnostic validés par la FUB pour la certification du label Employeur Pro Vélo.";
-                doc.setFont("helvetica", "normal");
-                doc.setFontSize(8);
-                doc.setTextColor(150, 150, 150);
-                const splitFooter = doc.splitTextToSize(footerText, pageWidth - (margin * 2));
-                doc.text(splitFooter, pageWidth / 2, pageHeight - 12, { align: 'center' });
+                doc.setFontSize(8); doc.setTextColor(150);
+                const footer = "Outil développé dans le cadre du CAVENA, validé par la FUB pour le label Employeur Pro Vélo.";
+                doc.text(doc.splitTextToSize(footer, pageWidth - 40), pageWidth / 2, 285, { align: 'center' });
             };
 
-            // --- PAGE 1: DISTANCES ---
-            doc.setTextColor(...softBlue); 
-            doc.setFontSize(22);
-            doc.setFont("helvetica", "bold");
-            doc.text("Rapport de diagnostic de mobilité", pageWidth / 2, 25, { align: 'center' });
+            // PAGE 1: DISTANCES
+            doc.setTextColor(...softBlue); doc.setFontSize(22); doc.setFont("helvetica", "bold");
+            doc.text("Rapport de Diagnostic Mobilité", pageWidth / 2, 25, { align: 'center' });
             
-            doc.setTextColor(80, 80, 80);
-            doc.setFontSize(11);
-            doc.setFont("helvetica", "normal");
-            doc.text(`Rapport généré le ${new Date().toLocaleDateString()} - Outil CartoProcessor`, margin, 50);
-            doc.text(`Effectif analysé : ${this.appState.routes.length} collaborateurs`, margin, 57);
-            
-            doc.setDrawColor(...softBlue);
-            doc.line(margin, 65, pageWidth - margin, 65);
-
             const distStats = this.categorizeData('distance', false);
             const distImg = await this.generateInvisibleChart('Distances', distStats, '#4facfe');
-            doc.setFontSize(14);
-            doc.setTextColor(...softBlue);
-            doc.text("1. ANALYSE DES DISTANCES", margin, 80);
-            doc.addImage(distImg, 'PNG', margin, 85, pageWidth - (margin*2), 70);
-            
-            const distComment = this.generateDistanceComment(distStats);
-            doc.setFont("helvetica", "italic");
-            doc.setFontSize(10);
-            doc.setTextColor(100, 100, 100);
-            doc.text(doc.splitTextToSize(distComment, pageWidth - (margin*2)), margin, 165);
+            doc.setFontSize(14); doc.text("1. Analyse des Distances", margin, 60);
+            doc.addImage(distImg, 'PNG', margin, 65, pageWidth - 40, 70);
+            doc.setFontSize(10); doc.setTextColor(100);
+            doc.text(doc.splitTextToSize(this.generateDistanceComment(distStats), pageWidth - 40), margin, 145);
             addFooter();
 
-            // --- PAGE 2: TEMPS ---
+            // PAGE 2: TEMPS & VAE
             doc.addPage();
-            doc.setFontSize(14);
-            doc.setTextColor(...softBlue);
-            doc.setFont("helvetica", "bold");
-            doc.text("2. ANALYSE DES TEMPS DE TRAJET", margin, 20);
-            
-            const timeStats = this.categorizeData('time', false);
-            const timeImg = await this.generateInvisibleChart('Musculaire', timeStats, '#4facfe');
-            doc.setFontSize(10);
-            doc.setTextColor(80, 80, 80);
-            doc.text("Situation actuelle (Vélo Musculaire / Standard)", margin, 30);
-            doc.addImage(timeImg, 'PNG', margin, 32, pageWidth - (margin*2), 65);
-            
+            doc.setTextColor(...softBlue); doc.setFontSize(14);
+            doc.text("2. Analyse des Temps (Simulation VAE)", margin, 20);
             const timeBikeStats = this.categorizeData('time', true);
-            const timeComment = this.generateTimeComment(timeStats, timeBikeStats);
-            doc.setFont("helvetica", "italic");
-            doc.setTextColor(100, 100, 100);
-            doc.text(doc.splitTextToSize(timeComment, pageWidth - (margin*2)), margin, 105);
-
             const bikeImg = await this.generateInvisibleChart('VAE', timeBikeStats, '#2ed573');
-            doc.setFont("helvetica", "bold");
-            doc.setTextColor(46, 213, 115);
-            doc.text("Projection comparative avec Assistance Électrique (VAE)", margin, 145);
-            doc.addImage(bikeImg, 'PNG', margin, 147, pageWidth - (margin*2), 65);
+            doc.addImage(bikeImg, 'PNG', margin, 30, pageWidth - 40, 70);
+            doc.setFontSize(10); doc.setTextColor(100);
+            doc.text(doc.splitTextToSize(this.generateTimeComment(this.categorizeData('time', false), timeBikeStats), pageWidth - 40), margin, 110);
             addFooter();
 
-            // --- PAGE 3: CARTE ---
+            // PAGE 3: CARTE DE CHALEUR
             doc.addPage();
-            doc.setFontSize(14);
-            doc.setTextColor(...softBlue);
-            doc.text("3. CARTE DE CHALEUR DES FLUX", margin, 30);
-            
+            doc.setTextColor(...softBlue); doc.setFontSize(14);
+            doc.text("3. Cartographie des Flux", margin, 20);
             const mapImg = MapDisplay.getMapImage();
             if (mapImg) {
-                doc.addImage(mapImg, 'PNG', margin, 40, pageWidth - (margin * 2), 100);
-            } else {
-                doc.setDrawColor(220, 220, 220);
-                doc.rect(margin, 40, pageWidth - (margin * 2), 100);
-                doc.setFontSize(10);
-                doc.setTextColor(180, 180, 180);
-                doc.text("Capture de la carte interactive", pageWidth/2, 90, {align:'center'});
+                doc.addImage(mapImg, 'PNG', margin, 30, pageWidth - 40, 100);
             }
             addFooter();
 
-            doc.save("Diagnostic_Mobilite.pdf");
-
-        } catch (e) {
-            console.error("[Analytics] Erreur PDF:", e);
-        } finally {
+            doc.save("Audit_Mobilite.pdf");
+        } catch (e) { console.error(e); } 
+        finally {
             btn.textContent = "Export Audit PDF";
             btn.disabled = false;
         }
